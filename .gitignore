@@ -39,6 +39,25 @@ _ops/
 .env
 .env.*
 !.env.example
+*.local.env
+.env.local
+
+# Secrets / credentials — never commit (defense-in-depth)
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+id_dsa
+.git-credentials
+.netrc
+credentials.json
+credentials.yml
+secret*
+*secret*
+*.access_token
+*.jwt
 
 # OS metadata
 .DS_Store
