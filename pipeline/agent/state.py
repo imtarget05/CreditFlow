@@ -91,6 +91,7 @@ class CreditState(TypedDict, total=False):
     # --- workflow control ---
     next: str                    # target node for conditional routing
     error: Optional[str]         # populated on failure paths
+    workflow_complete: bool      # set True by the terminal audit node
 
     # --- audit trail ---
     audit_trail: list[AuditEntry]

@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pipeline.agent.explanations import generate_explanation
 
 
+LOW_RISK = {"income": 5000, "age": 35, "employment_years": 10, "loan_amount": 20000, "loan_term": 36, "existing_debt": 3000, "credit_history": 8, "previous_defaults": 0}
+
 def run_eval(profiles: list[dict]) -> dict:
     """Evaluate explanation quality across profiles (offline-safe).
 
@@ -70,8 +72,12 @@ def _log_eval_mlflow(out: dict) -> None:
 
 
 if __name__ == "__main__":
-    from tests.test_agent import LOW_RISK, MID_RISK, HIGH_RISK
-    out = run_eval([LOW_RISK, MID_RISK, HIGH_RISK])
+    profiles = [
+        {"income": 5000, "age": 35, "employment_years": 10, "loan_amount": 20000, "loan_term": 36, "existing_debt": 3000, "credit_history": 8, "previous_defaults": 0},
+        {"income": 2500, "age": 32, "employment_years": 4, "loan_amount": 12000, "loan_term": 36, "existing_debt": 1000, "credit_history": 5, "previous_defaults": 2},
+        {"income": 2500, "age": 32, "employment_years": 4, "loan_amount": 12000, "loan_term": 36, "existing_debt": 3500, "credit_history": 5, "previous_defaults": 0},
+    ]
+    out = run_eval(profiles)
     d = Path("models/evaluation")
     d.mkdir(parents=True, exist_ok=True)
     import datetime

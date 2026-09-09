@@ -26,10 +26,10 @@ def retrieve(query: str, k: int = 2) -> list[dict]:
         return []
     ids, texts = zip(*docs)
     texts_list = list(texts)
-    vec = TfidfVectorizer().fit(texts_list + [query])
+    vec = TfidfVectorizer().fit(texts_list)
     m = vec.transform(texts_list)
     q = vec.transform([query])
     scores = cosine_similarity(q, m)[0]
-    ranked = sorted(zip(ids, texts, scores), key=lambda t: t[2], reverse=True)[:max(k, 0)]
+    ranked = sorted(zip(ids, texts, scores), key=lambda t: t[2], reverse=True)[:k]
     return [{"doc_id": i, "chunk": t[:600], "score": round(float(s), 4)}
             for i, t, s in ranked if s > 0]

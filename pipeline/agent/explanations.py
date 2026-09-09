@@ -124,7 +124,6 @@ def _try_llm_explanation(ctx: dict[str, Any]) -> ExplanationOutput | None:
         return try_cloudflare_explain(ctx)
 
     try:
-        from langchain_core.messages import HumanMessage
         from langchain_core.prompts import ChatPromptTemplate
     except ImportError:
         return None
@@ -169,7 +168,18 @@ def _try_llm_explanation(ctx: dict[str, Any]) -> ExplanationOutput | None:
 
     structured = llm.with_structured_output(ExplanationOutput)
     chain = prompt | structured
-    return chain.invoke(ctx)
+    result = chain.invoke(ctx)
+    result["_llm"] = True
+    result["prompt_version"] = PROMPT_VERSION
+    model_name = "unknown"
+    if provider == "openai":
+        model_name = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    elif provider == "anthropic":
+        model_name = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+    elif provider == "google":
+        model_name = os.environ.get("GOOGLE_MODEL", "gemini-2.0-flash")
+    result["llm_model"] = model_name
+    return result
 
 
 def _template_explanation(ctx: dict[str, Any]) -> ExplanationOutput:

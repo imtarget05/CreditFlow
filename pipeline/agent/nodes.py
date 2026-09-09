@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+import time
 from typing import Any, Callable
 
 from langgraph.types import interrupt
@@ -42,6 +43,8 @@ from pipeline.agent.state import (
 from pipeline.agent.fraud import run_fraud_check
 from pipeline.agent.policy import run_policy_check, has_blocking_violation
 from pipeline.agent.explanations import generate_explanation, explanation_to_text
+from pipeline.agent.retriever import retrieve
+from pipeline.validation.schemas import validate_dataframe
 from pipeline.modeling.threshold import (
     business_decision,
     DEFAULT_APPROVE_MAX,
@@ -239,16 +242,34 @@ def policy_engine(state: CreditState) -> dict:
 # ---------------------------------------------------------------------------
 def explain(state: CreditState) -> dict:
     """Generate a structured LLM explanation (LangChain, with template fallback)."""
-    expl = generate_explanation(state)
+    query = " ".join([
+        " ".join(state.get("reasons", []) or []),
+        state.get("risk_level", ""),
+        " ".join(state.get("fraud_flags", []) or []),
+        " ".join(state.get("policy_violations", []) or []),
+    ])
+    rag_hits = retrieve(query, k=2)
+    rag_context = "\n".join(hit.get("chunk", "") for hit in rag_hits)
+    rag_sources = [hit.get("doc_id") for hit in rag_hits]
+
+    ctx_state = {**state, "rag_context": rag_context, "rag_sources": rag_sources}
+    t0 = time.perf_counter()
+    expl = generate_explanation(ctx_state)
+    latency = (time.perf_counter() - t0) * 1000
+
     txt = explanation_to_text(expl)
-    # Strip the label prefix to keep the stored explanation clean.
-    # explanation_to_text returns labeled lines; we keep the raw text but
-    # also extract a concise summary field.
+    risk_factors = state.get("reasons", []) or []
     meta = {
         "source": "langchain_llm" if _llm_was_used(expl) else "template",
-        "risk_factors_count": len(expl.get("risk_factors", [])),
+        "risk_factors_count": len(risk_factors),
+        "latency_ms": round(latency, 2),
+        "llm_model": expl.get("llm_model", ""),
+        "prompt_version": expl.get("prompt_version", ""),
+        "rag_sources": rag_sources,
     }
     return {
+        "rag_context": rag_context,
+        "rag_sources": rag_sources,
         "explanation": txt,
         "explanation_meta": meta,
         "audit_trail": state.get("audit_trail", []) + [_audit_entry(
@@ -414,30 +435,23 @@ def audit(state: CreditState) -> dict:
 # ---------------------------------------------------------------------------
 # Edge routing helpers
 # ---------------------------------------------------------------------------
-def should_route_reject(state: CreditState) -> str:
-    """Conditional edge after decision: REJECT path."""
-    if state.get("error") or state.get("next") == "reject":
-        return "reject"
-    if state.get("decision") == DECISION_REJECT:
-        return "reject"
-    return "continue"
+def route_decision(state: CreditState) -> str:
+    """Single routing function from the decision node.
 
-
-def should_route_approve(state: CreditState) -> str:
-    """Conditional edge after decision: APPROVE path."""
+    Returns one of: "execute", "human_approval", "audit_reject".
+    """
+    if state.get("error") or state.get("decision") == DECISION_REJECT:
+        return "audit_reject"
     if state.get("decision") == DECISION_APPROVE:
-        return "approve"
-    return "continue"
-
-
-def should_route_review(state: CreditState) -> str:
-    """Conditional edge after decision: REVIEW → human approval path."""
+        return "execute"
     if state.get("decision") == DECISION_REVIEW and state.get("approval_required"):
-        return "review"
-    return "continue"
+        return "human_approval"
+    return "audit_reject"
 
 
 def after_human_approval(state: CreditState) -> str:
     """Conditional edge after human_approval: approved → execute, rejected → audit."""
     next_step = state.get("next", "reject")
-    return next_step
+    if next_step == "execute":
+        return "execute"
+    return "audit_reject"

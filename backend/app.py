@@ -239,7 +239,7 @@ def llm_info():
         "provider": provider or "template",
         "model": os.environ.get("CLOUDFLARE_MODEL", DEFAULT_MODEL),
         "prompt_version": PROMPT_VERSION,
-        "configured": bool(provider == "cloudflare" and os.environ.get("CLOUDFLARE_API_TOKEN")),
+        "configured": bool(provider == "cloudflare" and os.environ.get("CLOUDFLARE_ACCOUNT_ID") and os.environ.get("CLOUDFLARE_API_TOKEN")),
     }
 
 
@@ -309,6 +309,12 @@ def start_graph_workflow(req: GraphStartRequest):
         result = dict(state.values)
 
     _active_graphs[thread_id] = graph
+    meta = result.get("explanation_meta", {})
+    if meta.get("source") == "langchain_llm":
+        metrics.llm["requests"] += 1
+        metrics.llm["latency_sum_ms"] += meta.get("latency_ms", 0)
+    else:
+        metrics.llm["errors"] += 1
     return {
         "thread_id": thread_id,
         "application_id": result.get("application_id", ""),
@@ -318,6 +324,7 @@ def start_graph_workflow(req: GraphStartRequest):
         "approval_required": result.get("approval_required", False),
         "approval_status": result.get("approval_status", ""),
         "explanation": result.get("explanation", ""),
+        "explanation_meta": meta,
         "audit_trail": result.get("audit_trail", []),
         "workflow_complete": result.get("workflow_complete", False),
     }
@@ -340,6 +347,12 @@ def approve_graph_workflow(thread_id: str, req: GraphApprovalRequest):
         state = graph.get_state(config=run_config)
         result = dict(state.values)
 
+    meta = result.get("explanation_meta", {})
+    if meta.get("source") == "langchain_llm":
+        metrics.llm["requests"] += 1
+        metrics.llm["latency_sum_ms"] += meta.get("latency_ms", 0)
+    else:
+        metrics.llm["errors"] += 1
     return {
         "thread_id": thread_id,
         "application_id": result.get("application_id", ""),
@@ -347,6 +360,7 @@ def approve_graph_workflow(thread_id: str, req: GraphApprovalRequest):
         "approval_required": result.get("approval_required", False),
         "approval_status": result.get("approval_status", ""),
         "explanation": result.get("explanation", ""),
+        "explanation_meta": meta,
         "audit_trail": result.get("audit_trail", []),
         "workflow_complete": result.get("workflow_complete", False),
     }

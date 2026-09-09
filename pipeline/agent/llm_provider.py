@@ -61,7 +61,18 @@ def try_cloudflare_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
         return None
     try:
         text = r.json()["result"]["response"]
-        data = json.loads(text[text.index("{"): text.rindex("}") + 1])
+        start = text.index("{")
+        depth = 1
+        end = start
+        for i in range(start + 1, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        data = json.loads(text[start : end + 1])
     except Exception:
         return None
     return {

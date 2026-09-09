@@ -13,6 +13,13 @@ python-multipart>=0.0.9
 # Real-data ingest track (pipeline/data/ingest.py) — isolated from the serving path.
 pyyaml>=6.0
 
+# LangGraph decision workflow (pipeline/agent/) — state machine + human approval.
+langgraph==1.2.11
+
+# LangChain explanation layer (pipeline/agent/explanations.py) — LLM explains, never decides.
+langchain==1.4.0
+langchain-core==1.6.2
+
 # Optional — MLflow tracking in scripts/train_models.py (graceful if absent).
 # Full tracking verified with mlflow==3.16.0 (experiment creditflow-risk +
 # registered model creditflow-risk). Install with: pip install mlflow==3.16.0
