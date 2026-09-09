@@ -1,0 +1,5 @@
+model,best_threshold,business_cost,val_accuracy,val_precision,val_recall,val_f1,val_roc_auc,test_accuracy,test_precision,test_recall,test_f1,test_roc_auc
+logistic_regression,0.2,201.0,0.8387,0.442,0.8,0.5694,0.8817,0.8373,0.4321,0.7,0.5344,0.8672
+random_forest,0.25,233.0,0.844,0.4465,0.71,0.5483,0.8574,0.848,0.4493,0.62,0.521,0.8479
+xgboost,0.05,273.0,0.7853,0.3512,0.72,0.4721,0.8418,0.7773,0.335,0.68,0.4488,0.8233
+decision_tree,0.05,364.0,0.8133,0.3438,0.44,0.386,0.6554,0.84,0.402,0.41,0.4059,0.6581

@@ -1,0 +1,37 @@
+{
+  "model_name": "logistic_regression",
+  "version": "logistic_regression_v001",
+  "trained_at": "2026-09-09T13:31:46.613606+00:00",
+  "threshold": 0.2,
+  "business_cost": 201.0,
+  "fn_cost": 5.0,
+  "fp_cost": 1.0,
+  "val_metrics": {
+    "accuracy": 0.8387,
+    "precision": 0.442,
+    "recall": 0.8,
+    "f1": 0.5694,
+    "roc_auc": 0.8817
+  },
+  "test_metrics": {
+    "accuracy": 0.8373,
+    "precision": 0.4321,
+    "recall": 0.7,
+    "f1": 0.5344,
+    "roc_auc": 0.8672
+  },
+  "confusion_matrix": {
+    "true_positive": 70,
+    "false_positive": 92,
+    "true_negative": 558,
+    "false_negative": 30,
+    "note": "Test set at tuned threshold (spec \u00a79)."
+  },
+  "selection_reason": "Lowest normalized business cost on validation (201.00) with FN cost 5.0 > FP cost 1.0; recall-centric objective (spec \u00a73/\u00a79).",
+  "dataset": "data/creditflow_dataset.csv",
+  "dataset_name": "synthetic_proxy",
+  "mapping_version": "0.1",
+  "dataset_sha256": "b65728f853cad72e3ce51a639ac96c7f04e935170e79acda637b4e5eec2f5d80",
+  "seed": 42,
+  "rows": 5000
+}

@@ -1,0 +1,25 @@
+# CreditFlow — local orchestration
+services:
+  api:
+    build: .
+    container_name: creditflow-api
+    ports:
+      - "8080:8080"
+    environment:
+      - MLFLOW_TRACKING_URI=
+      - MLFLOW_DISABLE_AGENT_HINT=1
+    restart: unless-stopped
+
+  # Optional MLflow tracking server (enable when a remote store is wanted):
+  #   docker compose --profile mlflow up --build
+  #   MLFLOW_TRACKING_URI=http://localhost:5000 python scripts/train_models.py
+  # mlflow:
+  #   profiles: ["mlflow"]
+  #   image: ghcr.io/mlflow/mlflow:v3.16.0
+  #   command: mlflow server --host 0.0.0.0 --port 5000
+  #   ports:
+  #     - "5000:5000"
+  #   volumes:
+  #     - mlflow-data:/mlflow
+  # volumes:
+  #   mlflow-data:

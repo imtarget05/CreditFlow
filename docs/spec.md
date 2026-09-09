@@ -266,6 +266,7 @@ Python (toàn project), Pandas (ingestion/cleaning/EDA), NumPy (numeric), EDA (n
 ## 19. Constraints & compliance (bắt buộc)
 
 1. **Training trên Colab**: mọi training nặng chạy trên Colab qua extension do owner điều khiển. Agent **không tự ý dùng GPU local** chạy training khi chưa được cho phép. Agent chỉ chuẩn bị code Colab-ready + requirements + hướng dẫn chạy.
+   - **Deviation (2026-09-09)**: For 5k-row synthetic dataset, training runs locally (`scripts/train_models.py`, seed 42, ~10s CPU). Colab path remains available via `notebooks/creditflow_model_benchmark.ipynb`. Owner may restore `requirements-colab.txt` and shift to Colab if dataset scales.
 2. **Proxy dataset disclaimer**: dataset công khai chỉ là proxy. Không viết CV/log/report như thể đã triển khai cho ngân hàng thật. Mọi artifact phải ghi rõ mô phỏng.
 3. **No steady-state compatibility**: không giữ path cũ khi spec này đã chốt; mọi thay đổi qua spec revision.
 4. **Kỷ luật portfolio**: giữ vai trò bộ 3 — MAIA (AI/RAG), Hermes (agents/orchestration), CreditFlow (classical ML productionized).

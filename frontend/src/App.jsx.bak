@@ -1,0 +1,448 @@
+import React, { useEffect, useState } from "react";
+
+// In dev, Vite proxies /api → http://localhost:8080 (see vite.config.js).
+// VITE_API_BASE can override for deployed backends (e.g. a Render URL).
+// Fallback to the direct backend URL covers `vite preview` / opened dist builds
+// where the dev proxy does not exist.
+const PRIMARY_BASE = (import.meta.env.VITE_API_BASE) || "/api";
+const FALLBACK_BASE = "http://localhost:8080";
+
+async function fetchJson(path, options) {
+  let lastErr = null;
+  for (const base of [PRIMARY_BASE, FALLBACK_BASE]) {
+    try {
+      const r = await fetch(`${base}${path}`, options);
+      if (r.status === 404 && base === PRIMARY_BASE) {
+        lastErr = new Error("HTTP 404 via proxy, trying direct backend");
+        continue; // stale bundle or preview without proxy → retry direct
+      }
+      return r;
+    } catch (err) {
+      lastErr = err;
+      continue;
+    }
+  }
+  throw lastErr || new Error("Backend unreachable");
+}
+
+const FIELDS = [
+  { key: "income", label: "Monthly income", hint: "VND / month", type: "number", step: "any", min: 0 },
+  { key: "age", label: "Age", hint: "18–100 years", type: "number", step: "1", min: 18, max: 100 },
+  { key: "employment_years", label: "Employment years", hint: "continuous", type: "number", step: "any", min: 0 },
+  { key: "loan_amount", label: "Loan amount", hint: "VND", type: "number", step: "any", min: 0 },
+  { key: "loan_term", label: "Loan term", hint: "months", type: "number", step: "1", min: 1 },
+  { key: "existing_debt", label: "Existing debt", hint: "VND total", type: "number", step: "any", min: 0 },
+  { key: "credit_history", label: "Credit history", hint: "years", type: "number", step: "any", min: 0 },
+  { key: "previous_defaults", label: "Previous defaults", hint: "count", type: "number", step: "1", min: 0 },
+];
+
+const DEFAULT_PROFILE_VALUES = {
+  income: "2500",
+  age: "32",
+  employment_years: "4",
+  loan_amount: "12000",
+  loan_term: "36",
+  existing_debt: "3500",
+  credit_history: "5",
+  previous_defaults: "0",
+};
+
+const DEFAULT_PROFILE = { ...DEFAULT_PROFILE_VALUES };
+
+const PRESETS = {
+  prime: {
+    label: "Prime",
+    values: { income: "8000", age: "35", employment_years: "8", loan_amount: "12000", loan_term: "36", existing_debt: "1500", credit_history: "9", previous_defaults: "0" },
+  },
+  average: {
+    label: "Typical",
+    values: { ...DEFAULT_PROFILE_VALUES },
+  },
+  risky: {
+    label: "High-risk",
+    values: { income: "1500", age: "48", employment_years: "1", loan_amount: "60000", loan_term: "60", existing_debt: "18000", credit_history: "1", previous_defaults: "4" },
+  },
+};
+
+function fmtPct(prob) {
+  return `${(Number(prob) * 100).toFixed(1)}%`;
+}
+
+function tone(level) {
+  return level === "HIGH" ? "bad" : level === "MEDIUM" ? "warn" : "good";
+}
+
+export default function App() {
+  const [tab, setTab] = useState("predict");
+  const [form, setForm] = useState({ ...DEFAULT_PROFILE });
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [health, setHealth] = useState(null);
+  const [modelInfo, setModelInfo] = useState(null);
+  const [metrics, setMetrics] = useState(null);
+  const [monError, setMonError] = useState(null);
+  const [fieldErrors, setFieldErrors] = useState({});
+
+  const apiLabel = PRIMARY_BASE === "/api" ? "dev proxy /api → :8080" : PRIMARY_BASE;
+  const online = health?.status === "ok";
+
+  function validateForm(values) {
+    const errs = {};
+    for (const f of FIELDS) {
+      const raw = values[f.key];
+      if (raw === "" || raw === null || raw === undefined) {
+        errs[f.key] = "Required";
+        continue;
+      }
+      const v = Number(raw);
+      if (!Number.isFinite(v)) {
+        errs[f.key] = "Must be a number";
+        continue;
+      }
+      if (f.min !== undefined && v < f.min) errs[f.key] = `Must be ≥ ${f.min}`;
+      if (f.max !== undefined && v > f.max) errs[f.key] = `Must be ≤ ${f.max}`;
+    }
+    const age = Number(values.age);
+    if (Number.isFinite(age)) {
+      const emp = Number(values.employment_years);
+      if (Number.isFinite(emp) && emp > age - 18) errs.employment_years = "Must be ≤ age − 18";
+      const hist = Number(values.credit_history);
+      if (Number.isFinite(hist) && hist > age - 18) errs.credit_history = "Must be ≤ age − 18";
+    }
+    return errs;
+  }
+
+  function setField(key, value) {
+    setForm((f) => {
+      const next = { ...f, [key]: value };
+      setFieldErrors(validateForm(next));
+      return next;
+    });
+  }
+
+  function applyPreset(name) {
+    const values = { ...PRESETS[name].values };
+    setForm(values);
+    setFieldErrors({});
+    setResult(null);
+    setError(null);
+  }
+
+  async function checkHealth() {
+    try {
+      const r = await fetchJson("/health");
+      setHealth(r.ok ? await r.json() : { status: `error ${r.status}` });
+    } catch {
+      setHealth({ status: "unreachable" });
+    }
+  }
+
+  async function fetchModelInfo() {
+    try {
+      const r = await fetchJson("/model/info");
+      setModelInfo(r.ok ? await r.json() : null);
+    } catch {
+      setModelInfo(null);
+    }
+  }
+
+  async function fetchMetrics() {
+    try {
+      const r = await fetchJson("/metrics");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setMetrics(await r.json());
+      setMonError(null);
+    } catch {
+      setMetrics(null);
+      setMonError(`Backend unreachable (${apiLabel}). Start the API first: uvicorn backend.app:app --port 8080`);
+    }
+  }
+
+  useEffect(() => {
+    checkHealth();
+    setFieldErrors(validateForm(DEFAULT_PROFILE));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (tab === "model") fetchModelInfo();
+    if (tab === "monitor") fetchMetrics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  const formInvalid = Object.keys(validateForm(form)).length > 0;
+
+  async function submit(e) {
+    e.preventDefault();
+    const errs = validateForm(form);
+    setFieldErrors(errs);
+    if (Object.keys(errs).length > 0) {
+      setError("Please fix the highlighted fields before submitting.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const payload = {};
+      for (const f of FIELDS) payload[f.key] = Number(form[f.key]);
+      const r = await fetchJson("/predict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const detail =
+          typeof body.detail === "string"
+            ? body.detail
+            : JSON.stringify(body.detail || body);
+        throw new Error(`Prediction failed (${r.status}): ${detail}`);
+      }
+      setResult(body);
+    } catch (err) {
+      if (err instanceof TypeError || `${err.message}`.includes("Failed to fetch") || `${err.message}`.includes("unreachable")) {
+        setError(`Backend is unavailable (${apiLabel}). Start it with: uvicorn backend.app:app --host 0.0.0.0 --port 8080`);
+      } else {
+        setError(err.message);
+      }
+    } finally {
+      setLoading(false);
+      checkHealth();
+    }
+  }
+
+  return (
+    <div className="app">
+      <header className="topbar">
+        <div className="brand">
+          <div className="logo">CF</div>
+          <div>
+            <h1>CreditFlow</h1>
+            <div className="subtitle">ML Risk Decision Support · synthetic proxy data</div>
+          </div>
+        </div>
+        <span className={`health ${online ? "ok" : "down"}`}>
+          <span className={`dot ${online ? "ok" : "down"}`} />
+          {health ? (online ? `API online · ${health.model_name} ${health.model_version}` : `API unreachable (${health.status})`) : "API checking…"}
+        </span>
+      </header>
+
+      {!online && health && (
+        <div className="banner" role="alert">
+          <strong>Backend is not reachable.</strong>
+          <span> Start it first, then reload: </span>
+          <code>uvicorn backend.app:app --host 0.0.0.0 --port 8080</code>
+        </div>
+      )}
+
+      <nav className="tabs" role="tablist">
+        <button role="tab" aria-selected={tab === "predict"} className={tab === "predict" ? "active" : ""} onClick={() => setTab("predict")}>
+          Predict
+        </button>
+        <button role="tab" aria-selected={tab === "model"} className={tab === "model" ? "active" : ""} onClick={() => setTab("model")}>
+          Model
+        </button>
+        <button role="tab" aria-selected={tab === "monitor"} className={tab === "monitor" ? "active" : ""} onClick={() => setTab("monitor")}>
+          Monitoring
+        </button>
+      </nav>
+
+      <main>
+        {tab === "predict" && (
+          <section className="layout">
+            <div className="card">
+              <div className="card-head">
+                <h2>Applicant profile</h2>
+                <div className="presets">
+                  {Object.entries(PRESETS).map(([name, p]) => (
+                    <button key={name} type="button" className="chip" onClick={() => applyPreset(name)}>
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <form onSubmit={submit} noValidate className="grid">
+                {FIELDS.map((f) => (
+                  <label key={f.key} className={`field ${fieldErrors[f.key] ? "invalid" : ""}`}>
+                    <span className="field-top">
+                      <span>{f.label}</span>
+                      {f.hint && <span className="hint">{f.hint}</span>}
+                    </span>
+                    <input
+                      type={f.type}
+                      step={f.step}
+                      value={form[f.key]}
+                      onChange={(e) => setField(f.key, e.target.value)}
+                      placeholder={DEFAULT_PROFILE[f.key]}
+                      aria-invalid={Boolean(fieldErrors[f.key])}
+                    />
+                    {fieldErrors[f.key] && <span className="field-error">{fieldErrors[f.key]}</span>}
+                  </label>
+                ))}
+                <div className="actions">
+                  <button type="submit" disabled={loading || !online}>
+                    {loading ? "Scoring…" : "Run prediction"}
+                  </button>
+                  {!online && <span className="offline-note">API offline — start backend to enable.</span>}
+                </div>
+              </form>
+
+              {loading && <div className="loading"><span className="spinner" /> Scoring with production model…</div>}
+
+              {error && <div className="error" role="alert">{error}</div>}
+            </div>
+
+            <div className="card result-card">
+              <h2>Decision</h2>
+              {!result && !loading ? (
+                <div className="empty">
+                  <div className="empty-title">No prediction yet</div>
+                  <p>Fill the profile and run a prediction. Score, level, decision and model version appear here.</p>
+                </div>
+              ) : result && !loading ? (
+                <div className={`result ${tone(result.risk_level)}`}>
+                  <div className="prob-row">
+                    <div className="prob">{fmtPct(result.risk_probability)}</div>
+                    <div>
+                      <div className="level">{result.risk_level} · {result.decision}</div>
+                      <div className="model-line">{result.model_name} · {result.model_version}</div>
+                    </div>
+                  </div>
+                  <div className="bar">
+                    <div className="fill" style={{ width: `${Math.min(100, Math.max(0, result.risk_probability * 100))}%` }} />
+                  </div>
+                  <div className="scale">
+                    <span>&lt; 50% Approve</span>
+                    <span>50–80% Review</span>
+                    <span>&gt; 80% Reject</span>
+                  </div>
+                  <dl>
+                    <div>
+                      <dt>Risk probability</dt>
+                      <dd>{result.risk_probability}</dd>
+                    </div>
+                    <div>
+                      <dt>Risk level</dt>
+                      <dd>{result.risk_level}</dd>
+                    </div>
+                    <div>
+                      <dt>Decision</dt>
+                      <dd>{result.decision}</dd>
+                    </div>
+                    <div>
+                      <dt>Model</dt>
+                      <dd>{result.model_name} · {result.model_version}</dd>
+                    </div>
+                  </dl>
+                  {result.reasons && result.reasons.length > 0 && (
+                    <div className="reasons">
+                      <strong>Why:</strong> {result.reasons.join("; ")}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </section>
+        )}
+
+        {tab === "model" && (
+          <section className="card model-card">
+            <div className="card-head">
+              <h2>Production model</h2>
+              <button type="button" className="ghost" onClick={fetchModelInfo}>Refresh</button>
+            </div>
+            {modelInfo?.model ? (
+              <>
+                <div className="model-hero">
+                  <div>
+                    <div className="model-name">{modelInfo.model.model_name}</div>
+                    <div className="model-version">{modelInfo.model.version}</div>
+                  </div>
+                  <span className="badge">production</span>
+                </div>
+                <div className="kv">
+                  <div><span>Threshold</span><strong>{modelInfo.model.threshold}</strong></div>
+                  <div><span>Business cost</span><strong>{modelInfo.model.business_cost} (FN {modelInfo.model.fn_cost} / FP {modelInfo.model.fp_cost})</strong></div>
+                  <div><span>Val F1 / Recall</span><strong>{modelInfo.model.val_metrics?.f1} / {modelInfo.model.val_metrics?.recall}</strong></div>
+                  <div><span>Test F1 / Accuracy</span><strong>{modelInfo.model.test_metrics?.f1} / {modelInfo.model.test_metrics?.accuracy}</strong></div>
+                  <div><span>Dataset</span><strong>{modelInfo.model.dataset} · {modelInfo.model.rows} rows</strong></div>
+                </div>
+                {modelInfo.model.selection_reason && (
+                  <p className="note">{modelInfo.model.selection_reason}</p>
+                )}
+                <details>
+                  <summary>Raw model JSON</summary>
+                  <pre className="json">{JSON.stringify(modelInfo.model, null, 2)}</pre>
+                </details>
+              </>
+            ) : (
+              <div className="error">Model info unavailable — is the backend running ({apiLabel})?</div>
+            )}
+          </section>
+        )}
+
+        {tab === "monitor" && (
+          <section className="monitor">
+            <div className="card">
+              <div className="card-head">
+                <h2>Runtime metrics</h2>
+                <button type="button" className="ghost" onClick={fetchMetrics}>Refresh</button>
+              </div>
+              {monError && <div className="error" role="alert">{monError}</div>}
+              {metrics && (
+                <div className="stat-grid">
+                  <div className="stat"><span>Total requests</span><strong>{metrics.runtime?.requests?.total ?? "—"}</strong></div>
+                  <div className="stat"><span>Predictions</span><strong>{metrics.runtime?.requests?.predict ?? "—"}</strong></div>
+                  <div className="stat"><span>Errors</span><strong>{metrics.runtime?.errors?.total ?? "—"}</strong></div>
+                  <div className="stat"><span>Avg predict latency</span><strong>{metrics.runtime?.avg_predict_latency_ms ?? "—"} ms</strong></div>
+                  <div className="stat"><span>Uptime</span><strong>{metrics.runtime ? Math.round(metrics.runtime.uptime_seconds) : "—"} s</strong></div>
+                  <div className="stat"><span>Serving</span><strong>{metrics.model?.model_name ?? "—"} {metrics.model?.version ?? ""}</strong></div>
+                </div>
+              )}
+            </div>
+
+            <div className="card">
+              <h2>Model benchmark · real, from training</h2>
+              <p className="note">Selection = lowest business cost on validation (FN 5 / FP 1), not highest accuracy. Synthetic proxy dataset — see Model tab.</p>
+              {metrics?.benchmark && metrics.benchmark.length > 0 ? (
+                <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Model</th>
+                      <th>Threshold</th>
+                      <th>Cost</th>
+                      <th>Val F1</th>
+                      <th>Val Recall</th>
+                      <th>Test F1</th>
+                      <th>Test Acc</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {metrics.benchmark.map((m) => (
+                      <tr key={m.model} className={metrics.model?.model_name === m.model ? "current" : ""}>
+                        <td>{m.model}{metrics.model?.model_name === m.model ? " ●" : ""}</td>
+                        <td>{m.best_threshold}</td>
+                        <td>{m.business_cost}</td>
+                        <td>{m.val_f1}</td>
+                        <td>{m.val_recall}</td>
+                        <td>{m.test_f1}</td>
+                        <td>{m.test_accuracy}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                </div>
+              ) : (
+                <div className="error">No benchmark data — open this tab after the backend serves /metrics.</div>
+              )}
+            </div>
+            <button type="button" className="primary" onClick={() => setTab("predict")}>Submit another profile</button>
+          </section>
+        )}
+      </main>
+    </div>
+  );
+}

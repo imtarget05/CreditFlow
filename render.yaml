@@ -1,0 +1,20 @@
+# CreditFlow — deploy on Render (free tier)
+# Dashboard: https://dashboard.render.com → New → Web Service → connect this repo.
+# Build Command : pip install -r requirements.txt
+# Start Command : uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+# Health check  : /health
+# Env vars      : PYTHON_VERSION=3.11.9, MLFLOW_DISABLE_AGENT_HINT=1
+# After deploy, verify: GET <url>/health, POST <url>/predict, GET <url>/model/info
+services:
+  - type: web
+    name: creditflow-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: MLFLOW_DISABLE_AGENT_HINT
+        value: "1"

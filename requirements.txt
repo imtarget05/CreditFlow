@@ -1,0 +1,19 @@
+# CreditFlow serving (backend/FastAPI) dependencies.
+# Pinned to the versions used to train & save the production model artifact.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic==2.13.5
+scikit-learn==1.9.0
+xgboost==3.4.1
+joblib==1.6.0
+pandas==3.0.5
+numpy==2.5.3
+python-multipart>=0.0.9
+
+# Real-data ingest track (pipeline/data/ingest.py) — isolated from the serving path.
+pyyaml>=6.0
+
+# Optional — MLflow tracking in scripts/train_models.py (graceful if absent).
+# Full tracking verified with mlflow==3.16.0 (experiment creditflow-risk +
+# registered model creditflow-risk). Install with: pip install mlflow==3.16.0
+# mlflow==3.16.0
