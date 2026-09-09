@@ -27,3 +27,15 @@ def test_200_parses_structured(monkeypatch):
     monkeypatch.setattr(P.httpx, "post", lambda *a, **k: R())
     out = P.try_cloudflare_explain({"risk_score": 0.9, "risk_level": "HIGH"})
     assert out["summary"] == "ok" and out["_llm"] is True
+
+
+def test_generate_marks_llm_source(monkeypatch):
+    monkeypatch.setenv("CREDITFLOW_LLM_PROVIDER", "cloudflare")
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "x")
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "y")
+    import pipeline.agent.llm_provider as P
+    import pipeline.agent.explanations as E
+    marker = {"summary": "s", "risk_factors": ["r"], "recommendation_note": "n", "confidence": "high", "_llm": True}
+    monkeypatch.setattr(P, "try_cloudflare_explain", lambda ctx: marker)
+    out = E._try_llm_explanation({"risk_score": 0.9})
+    assert out is marker

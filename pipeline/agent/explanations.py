@@ -22,6 +22,7 @@ from typing import Any
 from typing_extensions import TypedDict
 
 from pipeline.agent.state import CreditState
+from pipeline.agent.llm_provider import PROMPT_VERSION
 
 
 class ExplanationOutput(TypedDict, total=False):
@@ -60,6 +61,8 @@ def _build_context(state: CreditState) -> dict[str, Any]:
         "fraud_score": state.get("fraud_score", 0.0),
         "fraud_flags": state.get("fraud_flags", []),
         "policy_violations": state.get("policy_violations", []),
+        "rag_context": state.get("rag_context", ""),
+        "rag_sources": state.get("rag_sources", []),
         "income": data.get("income", "N/A"),
         "age": data.get("age", "N/A"),
         "employment_years": data.get("employment_years", "N/A"),
@@ -85,6 +88,7 @@ Model: {model_name}
 Lý do rủi ro (rule-based): {reasons}
 Điểm gian lận: {fraud_score} (cờ: {fraud_flags})
 Vi phạm chính sách: {policy_violations}
+Bối cảnh chính sách (RAG, có thể rỗng): {rag_context}
 Thu nhập: {income} VND/tháng
 Tuổi: {age}
 Năm làm việc: {employment_years}
@@ -114,6 +118,10 @@ def _try_llm_explanation(ctx: dict[str, Any]) -> ExplanationOutput | None:
     provider = os.environ.get("CREDITFLOW_LLM_PROVIDER", "").lower().strip()
     if not provider:
         return None
+
+    if provider == "cloudflare":
+        from pipeline.agent.llm_provider import try_cloudflare_explain
+        return try_cloudflare_explain(ctx)
 
     try:
         from langchain_core.messages import HumanMessage
@@ -221,6 +229,7 @@ def _template_explanation(ctx: dict[str, Any]) -> ExplanationOutput:
         risk_factors=parts,
         recommendation_note="; ".join(rec_parts) if rec_parts else "Hồ sơ đủ thông tin",
         confidence=confidence,
+        prompt_version=PROMPT_VERSION,
     )
 
 
