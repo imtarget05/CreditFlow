@@ -1,6 +1,7 @@
 # CreditFlow — inference service image
 # Build:   docker build -t creditflow-api .
-# Run:     docker run -p 8080:8080 creditflow-api
+# Run:     docker run -p 8080:8080 --env-file .env creditflow-api
+# Secrets (CLOUDFLARE_*) are NOT baked in — pass via --env-file or -e flags.
 # Health:  curl http://localhost:8080/health
 FROM python:3.12-slim
 

@@ -38,6 +38,7 @@ Frontend (React/Vite) :5173 ──proxy /api──► FastAPI :8080
                                               ├─ /model/info production model + metrics
                                               ├─ /metrics    runtime + benchmark
                                               └─ /drift      ML drift monitoring (P11)
+                                               └─ /llm/info   LLM provider status (no secrets)
 FastAPI ─► Prediction Service ─► preprocessor + model (models/production/)
 Training: scripts/train_models.py → data/creditflow_dataset.csv
           → models/production/{pipeline.joblib, meta.json, benchmark_results.csv, reference_stats.json}
@@ -156,6 +157,10 @@ synthetic proxy its separability is strongest at lower thresholds. Selection is
 ---
 
 ## Docker
+
+> GenAI explain layer: set `CREDITFLOW_LLM_PROVIDER=cloudflare` + `CLOUDFLARE_*` in `.env`
+> to enable real LLM explanations. Without them, the explain falls back to a
+> deterministic template (fully offline). Secrets are NOT baked into the image.
 
 ```bash
 docker build -t creditflow-api .
