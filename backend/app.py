@@ -6,6 +6,12 @@ Endpoints (spec §12):
   GET  /model/info   -> production model version + metrics + selection reasoning
   GET  /metrics      -> runtime request/latency/error counters + benchmark
 
+LangGraph decision workflow (spec §16 architecture):
+  POST /predict/graph           -> start a credit decision workflow
+  POST /predict/graph/{thread_id}/approve -> resume with human approval
+  GET  /predict/graph/{thread_id}        -> workflow state
+  GET  /audit/{application_id}           -> audit trail
+
 Runtime metrics are held in-process (demo scope). The 4-model benchmark is served
 from models/production/benchmark_results.json so the comparison is reproducible and real.
 """
@@ -16,6 +22,7 @@ import time
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException
@@ -88,6 +95,7 @@ class Metrics:
         self.requests = {"total": 0, "predict": 0, "health": 0, "model_info": 0, "metrics": 0}
         self.errors = {"total": 0}
         self.latency = {"predict_sum_ms": 0.0, "predict_count": 0}
+        self.llm = {"requests": 0, "errors": 0, "latency_sum_ms": 0.0}
 
     def bump(self, endpoint: str, latency_ms: float = 0.0):
         self.requests["total"] += 1
@@ -106,6 +114,8 @@ class Metrics:
             "requests": dict(self.requests),
             "errors": dict(self.errors),
             "avg_predict_latency_ms": round(self.latency["predict_sum_ms"] / count, 3),
+            "llm_requests": self.llm["requests"],
+            "llm_errors": self.llm["errors"],
             "uptime_seconds": round(time.time() - self.started, 3),
         }
 
@@ -218,6 +228,21 @@ def model_info():
     return {"model": meta}
 
 
+@app.get("/llm/info")
+def llm_info():
+    """Report which LLM provider is configured (never leaks secrets)."""
+    import os
+    from pipeline.agent.llm_provider import DEFAULT_MODEL
+    from pipeline.agent.explanations import PROMPT_VERSION
+    provider = os.environ.get("CREDITFLOW_LLM_PROVIDER", "").lower().strip()
+    return {
+        "provider": provider or "template",
+        "model": os.environ.get("CLOUDFLARE_MODEL", DEFAULT_MODEL),
+        "prompt_version": PROMPT_VERSION,
+        "configured": bool(provider == "cloudflare" and os.environ.get("CLOUDFLARE_API_TOKEN")),
+    }
+
+
 @app.get("/metrics")
 def runtime_metrics():
     metrics.bump("metrics")
@@ -226,4 +251,147 @@ def runtime_metrics():
         "model": getattr(app.state, "meta", {}),
         "benchmark": _benchmark_payload(),
     }
+
+
+# ---------------------------------------------------------------------------
+# LangGraph decision workflow endpoints (spec §16 architecture)
+# ---------------------------------------------------------------------------
+# Active graph instances keyed by thread_id. InMemorySaver requires the same
+# graph instance for start + resume, so we keep them here.
+_active_graphs: dict[str, Any] = {}
+
+
+class GraphStartRequest(BaseModel):
+    """Request body to start a LangGraph credit decision workflow."""
+    customer_data: dict
+
+
+class GraphApprovalRequest(BaseModel):
+    """Request body to resume a paused workflow with human approval."""
+    action: str = Field(..., description="'approve' or 'reject'")
+    note: str = ""
+
+
+def _get_graph(thread_id: str):
+    """Retrieve an active graph instance by thread_id."""
+    graph = _active_graphs.get(thread_id)
+    if graph is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"workflow {thread_id} not found — may have expired or never started",
+        )
+    return graph
+
+
+@app.post("/predict/graph")
+def start_graph_workflow(req: GraphStartRequest):
+    """Start a LangGraph credit decision workflow.
+
+    Returns the workflow state. If the decision routes to REVIEW, the workflow
+    pauses at human_approval — use ``POST /predict/graph/{thread_id}/approve``
+    to resume.
+    """
+    from pipeline.agent.graph import build_credit_graph, create_workflow_run_id
+
+    pipeline = app.state.pipeline
+    meta = app.state.meta
+    graph = build_credit_graph(pipeline, meta)
+    thread_id = create_workflow_run_id()
+
+    initial_state = {"customer_data": req.customer_data, "request_meta": {}}
+    run_config = {"configurable": {"thread_id": thread_id}}
+
+    try:
+        result = graph.invoke(initial_state, config=run_config)
+    except Exception:
+        # Interrupt raised when the graph pauses at human_approval.
+        state = graph.get_state(config=run_config)
+        result = dict(state.values)
+
+    _active_graphs[thread_id] = graph
+    return {
+        "thread_id": thread_id,
+        "application_id": result.get("application_id", ""),
+        "decision": result.get("decision", "UNKNOWN"),
+        "risk_score": result.get("risk_score", 0.0),
+        "risk_level": result.get("risk_level", "UNKNOWN"),
+        "approval_required": result.get("approval_required", False),
+        "approval_status": result.get("approval_status", ""),
+        "explanation": result.get("explanation", ""),
+        "audit_trail": result.get("audit_trail", []),
+        "workflow_complete": result.get("workflow_complete", False),
+    }
+
+
+@app.post("/predict/graph/{thread_id}/approve")
+def approve_graph_workflow(thread_id: str, req: GraphApprovalRequest):
+    """Resume a paused workflow with a human approval decision.
+
+    The workflow must be in REVIEW state (approval_required=True).
+    """
+    from langgraph.types import Command
+
+    graph = _get_graph(thread_id)
+    run_config = {"configurable": {"thread_id": thread_id}}
+
+    try:
+        result = graph.invoke(Command(resume=req.action), config=run_config)
+    except Exception:
+        state = graph.get_state(config=run_config)
+        result = dict(state.values)
+
+    return {
+        "thread_id": thread_id,
+        "application_id": result.get("application_id", ""),
+        "decision": result.get("decision", "UNKNOWN"),
+        "approval_required": result.get("approval_required", False),
+        "approval_status": result.get("approval_status", ""),
+        "explanation": result.get("explanation", ""),
+        "audit_trail": result.get("audit_trail", []),
+        "workflow_complete": result.get("workflow_complete", False),
+    }
+
+
+@app.get("/predict/graph/{thread_id}")
+def get_graph_state(thread_id: str):
+    """Get the current state of a workflow (including paused workflows)."""
+    graph = _get_graph(thread_id)
+    run_config = {"configurable": {"thread_id": thread_id}}
+
+    state = graph.get_state(config=run_config)
+    result = dict(state.values)
+
+    return {
+        "thread_id": thread_id,
+        "application_id": result.get("application_id", ""),
+        "decision": result.get("decision", "UNKNOWN"),
+        "risk_score": result.get("risk_score", 0.0),
+        "risk_level": result.get("risk_level", "UNKNOWN"),
+        "approval_required": result.get("approval_required", False),
+        "approval_status": result.get("approval_status", ""),
+        "explanation": result.get("explanation", ""),
+        "audit_trail": result.get("audit_trail", []),
+        "workflow_complete": result.get("workflow_complete", False),
+    }
+
+
+@app.get("/audit/{application_id}")
+def get_audit_trail(application_id: str):
+    """Get the audit trail for a completed or in-progress workflow."""
+    # Search through stored graph instances for the application_id
+    for thread_id, graph in _active_graphs.items():
+        run_config = {"configurable": {"thread_id": thread_id}}
+        state = graph.get_state(config=run_config)
+        if state.values.get("application_id") == application_id:
+            return {
+                "application_id": application_id,
+                "thread_id": thread_id,
+                "audit_trail": state.values.get("audit_trail", []),
+                "decision": state.values.get("decision", "UNKNOWN"),
+                "workflow_complete": state.values.get("workflow_complete", False),
+            }
+    raise HTTPException(
+        status_code=404,
+        detail=f"application {application_id} not found",
+    )
 # ---------------------------------------------------------------------------
