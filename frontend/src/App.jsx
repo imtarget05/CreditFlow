@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 const PRIMARY_BASE = (import.meta.env.VITE_API_BASE) || "/api";
 const FALLBACK_BASE = "http://localhost:8080";
@@ -50,50 +50,10 @@ function parseVND(raw) {
   return n;
 }
 
-function formatVND(raw) {
-  const n = typeof raw === "number" ? raw : parseVND(raw);
-  if (!Number.isFinite(n)) return "";
-  return Math.round(n).toLocaleString("vi-VN");
-}
-
 function fmtNumber(raw) {
   const n = typeof raw === "number" ? raw : Number(raw);
   if (!Number.isFinite(n)) return String(raw ?? "—");
   return Math.round(n).toLocaleString("vi-VN");
-}
-
-// Map reason kỹ thuật -> tiếng Việt dễ hiểu cho cán bộ tín dụng.
-const REASON_VI = {
-  "high debt-to-income ratio": "Nợ hiện tại cao so với thu nhập",
-  "high loan-to-income ratio": "Khoản vay xin mới quá lớn so với thu nhập",
-  "short credit history": "Lịch sử tín dụng còn ngắn",
-  "history of missed payments": "Đã từng không trả nợ trong quá khứ",
-  "low overall risk profile": "Không có dấu hiệu rủi ro nổi bật",
-};
-
-function reasonVI(r) {
-  return REASON_VI[r] || r;
-}
-
-function outcomeCopy(result) {
-  if (!result) return null;
-  if (result.decision === "APPROVE")
-    return {
-      title: "Nên duyệt",
-      plain: "Hồ sơ này trông ổn. Khả năng khách hàng không trả được nợ là thấp.",
-      next: "Tiếp tục quy trình duyệt như bình thường.",
-    };
-  if (result.decision === "REVIEW")
-    return {
-      title: "Cần xem xét thêm",
-      plain: "Hồ sơ có một số điểm cần lưu ý. Chưa nên quyết ngay.",
-      next: "Đề nghị bổ sung giấy tờ, kiểm tra thêm hoặc giảm số tiền vay.",
-    };
-  return {
-    title: "Nên từ chối",
-    plain: "Khả năng khách hàng không trả được nợ là cao.",
-    next: "Từ chối hoặc yêu cầu tài sản đảm bảo / đồng vay.",
-  };
 }
 
 const FIELDS = [
@@ -194,10 +154,6 @@ function recommendation(level, decision) {
   };
 }
 
-function gutterClass(level) {
-  return level === "HIGH" ? "bad" : level === "MEDIUM" ? "warn" : "good";
-}
-
 export default function App() {
   const [tab, setTab] = useState("predict");
   const [form, setForm] = useState({ ...DEFAULT_PROFILE });
@@ -209,7 +165,6 @@ export default function App() {
   const [metrics, setMetrics] = useState(null);
   const [monError, setMonError] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
-  const [modelRawExpanded, setModelRawExpanded] = useState(false);
 
   const apiLabel = PRIMARY_BASE === "/api" ? "proxy dev /api → :8080" : PRIMARY_BASE;
   const online = health?.status === "ok";
