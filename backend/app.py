@@ -29,7 +29,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
-from backend.predict_service import load_production_model, predict_risk
+from backend.predict_service import load_production_model, predict_risk, to_model_units
 from pipeline.monitoring.drift import detect_drift
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -189,7 +189,9 @@ def predict(req: PredictRequest):
         raise HTTPException(status_code=500, detail=f"prediction_failed: {exc}")
     finally:
         metrics.bump("predict", (time.perf_counter() - t0) * 1000)
-    prediction_window.append({**req.model_dump(), "risk_probability": payload["risk_probability"]})
+    # Store training-scale values so PSI compares like-with-like against
+    # reference_stats.json (which was written at training time, pre-VND).
+    prediction_window.append({**to_model_units(req.model_dump()), "risk_probability": payload["risk_probability"]})
     return PredictResponse(**payload)
 
 
