@@ -3,7 +3,7 @@
 # Run:     docker run -p 8080:8080 --env-file .env creditflow-api
 # Secrets (CLOUDFLARE_*) are NOT baked in — pass via --env-file or -e flags.
 # Health:  curl http://localhost:8080/health
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

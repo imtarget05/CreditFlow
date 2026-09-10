@@ -150,7 +150,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://localhost:8080"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -167,9 +167,10 @@ def _benchmark_payload():
 def health():
     metrics.bump("health")
     meta = getattr(app.state, "meta", {})
+    model_loaded = hasattr(app.state, "pipeline") and app.state.pipeline is not None
     return HealthResponse(
         status="ok",
-        model_loaded=True,
+        model_loaded=model_loaded,
         model_version=meta.get("version", "unknown"),
         model_name=meta.get("model_name", "unknown"),
     )
