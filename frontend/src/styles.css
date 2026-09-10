@@ -104,12 +104,17 @@ input { caret-color: var(--accent); }
   align-items: center;
   gap: 8px;
   font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
   color: var(--ink-2);
   border: 1px solid var(--rule);
   border-radius: 999px;
   padding: 5px 12px;
   background: var(--sheet);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 44vw;
 }
 .health .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ink-3); flex: none; }
 .health.ok .dot { background: var(--good); }
@@ -322,6 +327,7 @@ button.danger-ghost:hover { background: var(--bad-wash); border-color: var(--acc
 }
 
 .detail-note { margin: 12px 0 0; font-size: 14px; }
+details.detail-note summary { cursor: pointer; font-weight: 600; color: var(--ink-2); }
 .next-title { margin: 14px 0 6px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); }
 .checklist { margin: 0; padding-left: 20px; font-size: 14px; }
 .checklist li { margin: 3px 0; }
@@ -425,7 +431,7 @@ table.grid tr.rowlink { cursor: pointer; }
 .stat { padding: 12px 14px; border-left: 1px solid var(--rule-soft); }
 .stat:first-child { border-left: none; }
 .stat span { display: block; font-size: 12px; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
-.stat strong { font-size: 19px; font-variant-numeric: tabular-nums; }
+.stat strong { font-size: 16px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 
 .kv { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; background: #fff; margin-top: 12px; }
 .kv > div { padding: 10px 14px; border-top: 1px solid var(--rule-soft); }

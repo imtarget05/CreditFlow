@@ -363,9 +363,9 @@ export default function App() {
               <div className="subtitle">{APP_SUBTITLE}</div>
             </div>
           </div>
-          <div className={`health ${online ? "ok" : "down"}`} title={JSON.stringify(health)}>
+          <div className={`health ${online ? "ok" : "down"}`} title={online ? `Backend đang hoạt động · ${health.model_version}` : "Backend không khả dụng"}>
             <span className="dot" aria-hidden="true" />
-            {online ? `Backend đang hoạt động · ${health.model_version}` : "Backend không khả dụng"}
+            {online ? health.model_version : "Backend offline"}
           </div>
         </div>
         <nav className="tabs" role="tablist" aria-label="Các mục CreditFlow">
@@ -613,11 +613,15 @@ export default function App() {
                     <div><span>Tỉ lệ chi phí FN/FP</span><strong>{modelInfo.model.fn_cost}/{modelInfo.model.fp_cost}</strong></div>
                   </div>
                   <p className="detail-note">
-                    Bỏ sót khách vỡ nợ tốn gấp {modelInfo.model.fn_cost}/{modelInfo.model.fp_cost} lần
-                    so với từ chối nhầm — vì vậy model thắng bằng recall/F1, không bằng accuracy.
+                    <strong>Vì sao model này thắng:</strong> chi phí nghiệp vụ thấp nhất
+                    ({modelInfo.model.business_cost}) — bỏ sót khách vỡ nợ (×{modelInfo.model.fn_cost}) đắt hơn
+                    từ chối nhầm (×{modelInfo.model.fp_cost}). Không chọn theo accuracy.
                   </p>
                   {modelInfo.model.selection_reason && (
-                    <p className="detail-note">{modelInfo.model.selection_reason}</p>
+                    <details className="detail-note">
+                      <summary>Lý do gốc (tiếng Anh)</summary>
+                      {modelInfo.model.selection_reason}
+                    </details>
                   )}
                 </div>
               ) : (
@@ -661,6 +665,7 @@ export default function App() {
                 !monError && <p className="detail-note">Đang tải số liệu…</p>
               )}
               <div className="next-title">So sánh các model</div>
+              <p className="detail-note">Chọn theo <strong>chi phí thấp nhất</strong> (bỏ sót ×5) — dòng ● là model đang chạy.</p>
               {metrics?.benchmark && metrics.benchmark.length > 0 ? (
                 <div className="table-wrap">
                   <table className="grid">
