@@ -24,6 +24,27 @@ ROOT = Path(__file__).resolve().parents[1]
 MODEL_FILE = ROOT / "models" / "production" / "pipeline.joblib"
 META_FILE = ROOT / "models" / "production" / "meta.json"
 
+VND_PER_MODEL_UNIT = 1000.0
+"""Contract VND -> training-scale divisor (scale-alignment, NOT an FX rate).
+
+API contract, UI và data dictionary đều nói VND. Artifact production lại train
+trên synthetic data thang ~10^3 (income mean 2664). Chia 3 trường tiền cho 1000
+đưa 1.5–20M VND về 1500–20000 units ≈ dải training (min–max), đồng thời giữ
+nguyên mọi tỉ số (DTI/LTI/debt-to-loan) vì tử và mẫu cùng chia một số.
+"""
+
+
+def to_model_units(features: dict) -> dict:
+    """Map contract-VND money fields into the model's training scale.
+
+    Chỉ chạm income/loan_amount/existing_debt; 5 trường còn lại giữ nguyên.
+    Không validate ở đây — validation đã chạy trước trên giá trị VND gốc.
+    """
+    out = dict(features)
+    for key in ("income", "loan_amount", "existing_debt"):
+        out[key] = float(features[key]) / VND_PER_MODEL_UNIT
+    return out
+
 
 class ModelUnavailableError(RuntimeError):
     """Raised when the production model cannot be loaded."""
@@ -47,7 +68,8 @@ def predict_risk(pipeline, features: dict, meta: dict) -> dict:
     if violations:
         raise ValueError(f"invalid_credit_profile: {'; '.join(violations)}")
 
-    fe, _flags = add_derived_features(df)
+    model_df = pd.DataFrame([to_model_units(features)])
+    fe, _flags = add_derived_features(model_df)
     cols = [c for c in fe.columns if c != "default"]
     proba = float(pipeline.predict_proba(fe[cols])[0, 1])
 
