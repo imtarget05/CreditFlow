@@ -10,12 +10,12 @@
 
 | # | Name | Type | Unit | Range / Rule | Nullable | Mô tả |
 |---|---|---|---|---|---|---|
-| 1 | `income` | float | VND/tháng (chuẩn hóa ở pipeline) | `> 0` | No | Thu nhập tại thời điểm nộp hồ sơ |
+| 1 | `income` | float | VND/tháng (contract) → serving chia 1000 về training-scale tại `backend/predict_service.py:to_model_units` (scale-alignment, không phải tỉ giá) | `> 0` | No | Thu nhập tại thời điểm nộp hồ sơ |
 | 2 | `age` | int | năm | `18–100` | No | Tuổi tại thời điểm nộp hồ sơ |
 | 3 | `employment_years` | float | năm | `>= 0`, `<= age - 18` (sanity) | No | Số năm làm việc liên tục |
-| 4 | `loan_amount` | float | VND | `> 0` | No | Số tiền vay đề nghị |
+| 4 | `loan_amount` | float | VND (contract) → serving chia 1000 như `income` | `> 0` | No | Số tiền vay đề nghị |
 | 5 | `loan_term` | int | tháng | `> 0` (ví dụ 6–84, chốt theo dataset) | No | Kỳ hạn vay |
-| 6 | `existing_debt` | float | VND | `>= 0` | No | Tổng dư nợ hiện hữu |
+| 6 | `existing_debt` | float | VND (contract) → serving chia 1000 như `income` | `>= 0` | No | Tổng dư nợ hiện hữu |
 | 7 | `credit_history` | float | năm | `>= 0`, `<= age - 18` (sanity) | No | Độ dài lịch sử tín dụng |
 | 8 | `previous_defaults` | int | count | `>= 0` | No | Số lần default/vỡ nợ trước đây |
 
