@@ -301,7 +301,13 @@ export default function App() {
 
   const formInvalid = Object.keys(validate(form)).length > 0;
 
-  useEffect(() => { checkHealth(); setFieldErrors(validate(DEFAULT_PROFILE)); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => {
+    checkHealth();
+    setFieldErrors(validate(DEFAULT_PROFILE));
+    const t = setInterval(checkHealth, 15000);
+    return () => clearInterval(t);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, []);
   useEffect(() => { if (tab === "model") fetchModelInfo(); if (tab === "monitor") fetchMetrics(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tab]);
 
   const toneClass = !result ? "" : result.decision === "APPROVE" ? "good" : result.decision === "REJECT" ? "bad" : "warn";
