@@ -151,8 +151,9 @@ def make_risk_model(pipeline: Any, meta: dict) -> Callable:
 
         data: dict = state.get("customer_data", {})
 
-        # --- featurize (mirrors predict_service.predict_risk) ---
-        df = pd.DataFrame([data])
+        # --- featurize (same units path as predict_service.predict_risk) ---
+        from backend.predict_service import to_model_units
+        df = pd.DataFrame([to_model_units(data)])
         _, violations = validate_dataframe(df)
         if violations:
             # validate_input should have caught this, but guard anyway
