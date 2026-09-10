@@ -9,12 +9,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
-def test_verify_deploy_produces_pass_evidence():
-    """When docker build/run succeeds and endpoints return 200, evidence should be PASS."""
+def test_verify_deploy_produces_pass_evidence(tmp_path):
+    """When docker build/run succeeds and endpoints return 200, evidence should be PASS.
+
+    Evidence is written to a temp dir (not the real docs/evidence/deploy-check.json)
+    so this test never overwrites committed verification evidence.
+    """
     from scripts.verify_deploy import main
 
     build_proc = MagicMock()
@@ -24,7 +28,7 @@ def test_verify_deploy_produces_pass_evidence():
 
     run_proc = MagicMock()
     run_proc.returncode = 0
-    run_proc.stdout = "abc123\n"
+    run_proc.stdout = "<container-id>\n"
     run_proc.stderr = ""
 
     health_resp = MagicMock()
@@ -47,11 +51,15 @@ def test_verify_deploy_produces_pass_evidence():
             return MagicMock(returncode=0)
         return MagicMock(returncode=0)
 
-    with patch("scripts.verify_deploy.subprocess.run", side_effect=fake_run):
-        with patch("scripts.verify_deploy.requests.get", side_effect=[health_resp, model_info_resp]):
-            with patch("scripts.verify_deploy.requests.post", return_value=predict_resp):
-                with patch("scripts.verify_deploy.time.sleep"):
-                    evidence = main()
+    evidence_dir = tmp_path / "evidence"
+    evidence_file = evidence_dir / "deploy-check.json"
+    with patch("scripts.verify_deploy.EVIDENCE_DIR", evidence_dir):
+        with patch("scripts.verify_deploy.EVIDENCE_FILE", evidence_file):
+            with patch("scripts.verify_deploy.subprocess.run", side_effect=fake_run):
+                with patch("scripts.verify_deploy.requests.get", side_effect=[health_resp, model_info_resp]):
+                    with patch("scripts.verify_deploy.requests.post", return_value=predict_resp):
+                        with patch("scripts.verify_deploy.time.sleep"):
+                            evidence = main()
 
     assert evidence["overall"] == "PASS"
     assert evidence["docker_build"]["returncode"] == 0
@@ -59,9 +67,13 @@ def test_verify_deploy_produces_pass_evidence():
     assert evidence["endpoints"]["health"]["ok"] is True
     assert evidence["endpoints"]["predict"]["status"] == 200
     assert evidence["endpoints"]["model_info"]["status"] == 200
+    # Evidence was written to the temp path only — the committed file is untouched.
+    assert evidence_file.exists()
+    committed = ROOT / "docs" / "evidence" / "deploy-check.json"
+    assert json.loads(committed.read_text())["docker_run"]["stdout_tail"].strip() != "abc123"
 
 
-def test_verify_deploy_marks_fail_on_build_error():
+def test_verify_deploy_marks_fail_on_build_error(tmp_path):
     """When docker build fails, evidence should be FAIL."""
     from scripts.verify_deploy import main
 
@@ -70,9 +82,11 @@ def test_verify_deploy_marks_fail_on_build_error():
     build_proc.stdout = ""
     build_proc.stderr = "build failed"
 
-    with patch("scripts.verify_deploy.subprocess.run", return_value=build_proc):
-        with patch("scripts.verify_deploy.EVIDENCE_DIR"):
-            with patch.object(Path, "write_text"):
+    evidence_dir = tmp_path / "evidence"
+    evidence_file = evidence_dir / "deploy-check.json"
+    with patch("scripts.verify_deploy.EVIDENCE_DIR", evidence_dir):
+        with patch("scripts.verify_deploy.EVIDENCE_FILE", evidence_file):
+            with patch("scripts.verify_deploy.subprocess.run", return_value=build_proc):
                 evidence = main()
 
     assert evidence["overall"] == "FAIL"
