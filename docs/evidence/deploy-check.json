@@ -1,0 +1,37 @@
+{
+  "docker_build": {
+    "returncode": 0,
+    "stdout_tail": "",
+    "stderr_tail": "ng manifest list sha256:8691c843c306f32473e1d10c33563ad66a69672ac4597f721f49e88f63efe657 done\n#13 naming to docker.io/library/creditflow-api:latest done\n#13 unpacking to docker.io/library/creditflow-api:latest\n#13 unpacking to docker.io/library/creditflow-api:latest 6.6s done\n#13 DONE 36.2s\n\nView build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/lmaiclmlypvg6rjyjf99bw6ng\n"
+  },
+  "docker_run": {
+    "returncode": 0,
+    "stdout_tail": "7eea510335852ae6dc9c3726f37295bdc443c4b75d98b3d537da96ef3cffb3f0\n",
+    "stderr_tail": ""
+  },
+  "endpoints": {
+    "health": {
+      "ok": true
+    },
+    "predict": {
+      "status": 200,
+      "body_keys": [
+        "risk_probability",
+        "risk_level",
+        "decision",
+        "model_version",
+        "model_name",
+        "threshold",
+        "reasons",
+        "deployment"
+      ]
+    },
+    "model_info": {
+      "status": 200,
+      "body_keys": [
+        "model"
+      ]
+    }
+  },
+  "overall": "PASS"
+}

@@ -4,7 +4,7 @@
 
 > **Status**: FINAL — 100/100 LOCAL INTERVIEW READY + LangGraph + GenAI Cloudflare slice.
 > GenAI slice complete: Cloudflare Workers AI explain backend, TF-IDF policy RAG,
-> eval harness, MLflow logging, `/llm/info` endpoint, CI — all 87 tests passing.
+> eval harness, MLflow logging, `/llm/info` endpoint, CI — all 95 tests passing.
 
 ## Current State
 
