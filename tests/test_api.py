@@ -26,13 +26,13 @@ client = _stack.enter_context(TestClient(app))
 
 
 VALID = {
-    "income": 2500.0,
-    "age": 32,
-    "employment_years": 4.0,
-    "loan_amount": 12000.0,
+    "income": 8000000.0,
+    "age": 35,
+    "employment_years": 8.0,
+    "loan_amount": 120000000.0,
     "loan_term": 36,
-    "existing_debt": 3500.0,
-    "credit_history": 5.0,
+    "existing_debt": 15000000.0,
+    "credit_history": 9.0,
     "previous_defaults": 0,
 }
 
