@@ -54,6 +54,19 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def build_update_stamp(prev_meta: dict | None, reason: str) -> dict:
+    """Provenance cho lần retrain này (spec §11: thay đổi model phải audit được).
+
+    Version string giữ cố định (v001 hardcode) nên phía UI detect "model mới"
+    bằng trained_at, không bằng version. previous_trained_at None ở lần đầu.
+    """
+    cleaned = (reason or "").strip()
+    return {
+        "update_reason": cleaned or "scheduled retrain (no reason given)",
+        "previous_trained_at": (prev_meta or {}).get("trained_at"),
+    }
+
+
 def _prepare_data() -> pd.DataFrame:
     if not DATASET_PATH.exists():
         write_dataset(DATASET_PATH, n=5000, random_state=42)
@@ -65,7 +78,7 @@ def _prepare_data() -> pd.DataFrame:
     return df.dropna().reset_index(drop=True)
 
 
-def train(force_regenerate: bool = False) -> None:
+def train(force_regenerate: bool = False, reason: str = "") -> None:
     if force_regenerate or not DATASET_PATH.exists():
         write_dataset(DATASET_PATH, n=5000, random_state=42)
     df = _prepare_data()
@@ -177,6 +190,12 @@ def train(force_regenerate: bool = False) -> None:
         "seed": 42,
         "rows": int(len(df)),
     }
+    prev_meta = {}
+    try:
+        prev_meta = json.loads((PROD_DIR / "meta.json").read_text())
+    except (OSError, ValueError):
+        prev_meta = {}
+    meta.update(build_update_stamp(prev_meta, reason))
     (PROD_DIR / "meta.json").write_text(json.dumps(meta, indent=2))
 
     # Reference statistics for ML drift monitoring (P11): snapshot of the exact
@@ -227,6 +246,7 @@ def _log_mlflow(model_name, version, meta, results, best_pipe, artifact_path) ->
         mlflow.log_param("fp_cost", meta["fp_cost"])
         mlflow.log_param("production_model", model_name)
         mlflow.log_param("production_version", version)
+        mlflow.log_param("update_reason", meta.get("update_reason", ""))
         for _, row in results.iterrows():
             with mlflow.start_run(run_name=str(row["model"]), nested=True):
                 mlflow.log_param("model_name", str(row["model"]))
@@ -262,4 +282,9 @@ def _log_mlflow(model_name, version, meta, results, best_pipe, artifact_path) ->
 
 
 if __name__ == "__main__":
-    train(force_regenerate=os.environ.get("CREDITFLOW_REGENERATE") == "1")
+    import argparse
+
+    parser = argparse.ArgumentParser(description="CreditFlow training (spec §3/§9).")
+    parser.add_argument("--reason", default="", help="Lý do retrain, ghi vào meta.json + MLflow (spec §11).")
+    args = parser.parse_args()
+    train(force_regenerate=os.environ.get("CREDITFLOW_REGENERATE") == "1", reason=args.reason)
