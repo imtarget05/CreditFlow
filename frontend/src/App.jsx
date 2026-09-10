@@ -174,6 +174,18 @@ function loadHistory() {
   }
 }
 
+const MODEL_SEEN_KEY = "creditflow-model-seen";
+
+function loadModelSeen() {
+  try {
+    const raw = localStorage.getItem(MODEL_SEEN_KEY);
+    const o = raw ? JSON.parse(raw) : null;
+    return o && typeof o === "object" ? o : {};
+  } catch {
+    return {};
+  }
+}
+
 export default function App() {
   const [tab, setTab] = useState("predict");
   const [form, setForm] = useState({ ...DEFAULT_PROFILE });
@@ -187,6 +199,7 @@ export default function App() {
   const [monError, setMonError] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
   const [history, setHistory] = useState(loadHistory);
+  const [updateNote, setUpdateNote] = useState(null);
 
   const apiLabel = PRIMARY_BASE === "/api" ? "proxy dev /api → :8080" : PRIMARY_BASE;
   const online = health?.status === "ok";
@@ -287,8 +300,33 @@ export default function App() {
   }
 
   async function fetchModelInfo() {
-    try { const r = await fetchJson("/model/info"); setModelInfo(r.ok ? await r.json() : null); }
-    catch { setModelInfo(null); }
+    try {
+      const r = await fetchJson("/model/info");
+      const info = r.ok ? await r.json() : null;
+      setModelInfo(info);
+      const m = info?.model;
+      if (m?.trained_at) {
+        const seen = loadModelSeen();
+        if (seen.trained_at && seen.trained_at !== m.trained_at) {
+          setUpdateNote({
+            version: m.version,
+            trained_at: m.trained_at,
+            reason: m.update_reason || "—",
+            previous_trained_at: m.previous_trained_at || "—",
+          });
+        } else if (!seen.trained_at) {
+          try { localStorage.setItem(MODEL_SEEN_KEY, JSON.stringify({ version: m.version, trained_at: m.trained_at })); } catch { /* bỏ qua */ }
+        }
+      }
+    } catch { setModelInfo(null); }
+  }
+
+  function dismissUpdateNote() {
+    const m = modelInfo?.model;
+    try {
+      if (m?.trained_at) localStorage.setItem(MODEL_SEEN_KEY, JSON.stringify({ version: m.version, trained_at: m.trained_at }));
+    } catch { /* bỏ qua */ }
+    setUpdateNote(null);
   }
 
   async function fetchMetrics() {
@@ -599,6 +637,16 @@ export default function App() {
               <button type="button" className="ghost" onClick={fetchMetrics}>Làm mới</button>
             </div>
             <div className="pad">
+              {updateNote && (
+                <div className="banner" role="status">
+                  <strong>Model vừa cập nhật (mô phỏng): {updateNote.version}</strong>{" "}
+                  lúc {fmtTime(updateNote.trained_at)} — bản trước {fmtTime(updateNote.previous_trained_at)}.{" "}
+                  <button type="button" className="ghost" onClick={dismissUpdateNote}>Đã rõ</button>
+                </div>
+              )}
+              {modelInfo?.model?.update_reason && (
+                <p className="detail-note"><strong>Ghi chú lần cập nhật:</strong> {modelInfo.model.update_reason}</p>
+              )}
               {monError && <div className="error" role="alert">{monError}</div>}
               {metrics ? (
                 <div className="stat-grid">
