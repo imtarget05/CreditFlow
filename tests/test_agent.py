@@ -146,7 +146,17 @@ def test_explanation_deterministic_fallback(monkeypatch):
     assert len(text) > 0
 
 
-def test_explanation_high_risk():
+def test_explanation_high_risk(monkeypatch):
+    # Env isolation: force the deterministic template even when real
+    # Cloudflare credentials exist in the developer's shell environment.
+    for var in (
+        "CREDITFLOW_LLM_PROVIDER",
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_API_TOKEN",
+        "CLOUDFLARE_MODEL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
     from pipeline.agent.explanations import generate_explanation
     from pipeline.agent.state import CreditState
 
@@ -165,7 +175,17 @@ def test_explanation_high_risk():
     summary = expl.get("summary", "")
     assert "HIGH" in summary or "cao" in summary.lower()
 
-def test_explain_node_wires_rag():
+def test_explain_node_wires_rag(monkeypatch):
+    # Env isolation: force the deterministic template even when real
+    # Cloudflare credentials exist in the developer's shell environment.
+    for var in (
+        "CREDITFLOW_LLM_PROVIDER",
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_API_TOKEN",
+        "CLOUDFLARE_MODEL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
     from pipeline.agent.nodes import explain
     from pipeline.agent.state import CreditState
 
@@ -227,7 +247,9 @@ def test_explanation_langchain_provenance(monkeypatch):
 # ---------------------------------------------------------------------------
 # Graph workflow tests
 # ---------------------------------------------------------------------------
-def test_graph_approve_path():
+def test_graph_approve_path(monkeypatch):
+    for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
+        monkeypatch.delenv(var, raising=False)
     from pipeline.agent.graph import run_credit_workflow
     pipeline, meta = load_production_model()
     result = run_credit_workflow(pipeline, meta, LOW_RISK)
@@ -237,7 +259,9 @@ def test_graph_approve_path():
     assert len(result.get("audit_trail", [])) == 9
 
 
-def test_graph_reject_path():
+def test_graph_reject_path(monkeypatch):
+    for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
+        monkeypatch.delenv(var, raising=False)
     from pipeline.agent.graph import run_credit_workflow
     pipeline, meta = load_production_model()
     result = run_credit_workflow(pipeline, meta, HIGH_RISK)
@@ -247,7 +271,9 @@ def test_graph_reject_path():
     assert len(violations) > 0
 
 
-def test_graph_review_path_pauses():
+def test_graph_review_path_pauses(monkeypatch):
+    for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
+        monkeypatch.delenv(var, raising=False)
     from pipeline.agent.graph import run_credit_workflow
     pipeline, meta = load_production_model()
     result = run_credit_workflow(pipeline, meta, MID_RISK)
@@ -259,7 +285,9 @@ def test_graph_review_path_pauses():
 # ---------------------------------------------------------------------------
 # FastAPI graph endpoint tests
 # ---------------------------------------------------------------------------
-def test_graph_endpoint_start_approve():
+def test_graph_endpoint_start_approve(monkeypatch):
+    for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
+        monkeypatch.delenv(var, raising=False)
     r = client.post("/predict/graph", json={"customer_data": LOW_RISK})
     assert r.status_code == 200
     body = r.json()
@@ -269,7 +297,9 @@ def test_graph_endpoint_start_approve():
     assert "audit_trail" in body
 
 
-def test_graph_endpoint_start_reject():
+def test_graph_endpoint_start_reject(monkeypatch):
+    for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
+        monkeypatch.delenv(var, raising=False)
     r = client.post("/predict/graph", json={"customer_data": HIGH_RISK})
     assert r.status_code == 200
     body = r.json()
@@ -277,7 +307,9 @@ def test_graph_endpoint_start_reject():
     assert body["workflow_complete"] is True
 
 
-def test_graph_endpoint_start_review_and_resume():
+def test_graph_endpoint_start_review_and_resume(monkeypatch):
+    for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
+        monkeypatch.delenv(var, raising=False)
     r = client.post("/predict/graph", json={"customer_data": MID_RISK})
     assert r.status_code == 200
     body = r.json()
@@ -295,7 +327,9 @@ def test_graph_endpoint_start_review_and_resume():
     assert body2["workflow_complete"] is True
 
 
-def test_graph_endpoint_start_review_and_reject():
+def test_graph_endpoint_start_review_and_reject(monkeypatch):
+    for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
+        monkeypatch.delenv(var, raising=False)
     r = client.post("/predict/graph", json={"customer_data": MID_RISK})
     assert r.status_code == 200
     body = r.json()
@@ -311,7 +345,9 @@ def test_graph_endpoint_start_review_and_reject():
     assert body2["workflow_complete"] is True
 
 
-def test_graph_endpoint_get_state():
+def test_graph_endpoint_get_state(monkeypatch):
+    for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
+        monkeypatch.delenv(var, raising=False)
     r = client.post("/predict/graph", json={"customer_data": MID_RISK})
     body = r.json()
     thread_id = body["thread_id"]
@@ -328,7 +364,9 @@ def test_graph_endpoint_get_state_not_found():
     assert r.status_code == 404
 
 
-def test_graph_endpoint_audit_trail():
+def test_graph_endpoint_audit_trail(monkeypatch):
+    for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
+        monkeypatch.delenv(var, raising=False)
     r = client.post("/predict/graph", json={"customer_data": LOW_RISK})
     body = r.json()
     app_id = body["application_id"]

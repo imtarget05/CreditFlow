@@ -9,6 +9,7 @@ joblib==1.6.0
 pandas==3.0.5
 numpy==2.5.3
 python-multipart>=0.0.9
+httpx==0.28.1
 
 # Real-data ingest track (pipeline/data/ingest.py) — isolated from the serving path.
 pyyaml>=6.0

@@ -76,6 +76,8 @@ secret*
 .DS_Store
 
 # Runtime evidence and local agent state
+# Eval outputs (timestamped, regenerate with scripts/eval_explanations.py)
+models/evaluation/
 .claude/settings.local.json
 .claude/.atomic_pending
 .claude/.session-id

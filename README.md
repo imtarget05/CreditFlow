@@ -194,9 +194,15 @@ Acceptance after deploy: `GET <url>/health`, `POST <url>/predict`,
 
 > GenAI explain layer on Render: set `CREDITFLOW_LLM_PROVIDER=cloudflare`,
 > `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_MODEL` in the
-> Render dashboard env vars (marked `sync: false` in `render.yaml` — values
-> live only in your dashboard, never in the repo). Verified working against
-> the Workers AI REST API; without them the explain falls back to the
+> Render dashboard env vars (`CLOUDFLARE_*` secrets marked `sync: false` in
+> `render.yaml` — values live only in your dashboard, never in the repo).
+> Default model `@cf/meta/llama-3.2-1b-instruct` is the smallest Meta chat
+> model: cheapest per free-tier Neuron budget (10,000 free Neurons/day,
+> shared across Workers AI; $0.011/1k Neurons above that on Workers Paid —
+> per-model token rates at
+> `developers.cloudflare.com/workers-ai/platform/pricing`).
+> Verified working against the Workers AI REST API (live `source:
+> "langchain_llm"`, ~1s); without credentials the explain falls back to the
 > deterministic template (offline-safe).
 
 ---

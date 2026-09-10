@@ -3,7 +3,8 @@
 Reads credentials from env only — never hardcode secrets:
   CREDITFLOW_LLM_PROVIDER=cloudflare
   CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN
-  CLOUDFLARE_MODEL (default @cf/meta/llama-3.1-8b-instruct)
+  CLOUDFLARE_MODEL (default @cf/meta/llama-3.2-1b-instruct — smallest Meta
+  chat model, cheapest per free-tier Neuron budget)
 
 Returns None when not configured/unreachable so the caller falls back
 to the deterministic template (offline-safe).
@@ -17,7 +18,7 @@ from typing import Any
 import httpx
 
 PROMPT_VERSION = "credit-explain-v1"
-DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+DEFAULT_MODEL = "@cf/meta/llama-3.2-1b-instruct"
 
 
 class LLMUnavailable(Exception):
@@ -43,12 +44,19 @@ def try_cloudflare_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
     cfg = _cfg()
     if cfg is None:
         return None
+    # Compact English prompt — small instruct models (e.g. llama-3.2-1b) follow
+    # JSON shape reliably only with a minimal, braces-anchored instruction.
+    # The summary text itself is requested in Vietnamese; only the scaffold
+    # language is English to maximise instruction-following at 1B scale.
     prompt = (
-        "Giải thích rủi ro tín dụng. Dữ liệu: " + json.dumps(ctx, default=str)[:3000] + "\n"
-        "Trả về DUY NHẤT một JSON object với đúng các keys: "
-        '{"summary": str (<=200 ký tự), "risk_factors": [str] (tối đa 5), '
-        '"recommendation_note": str (<=200 ký tự), "confidence": "low"|"medium"|"high"}. '
-        "Không markdown, không text ngoài JSON."
+        "STRICT JSON ONLY. Explain this credit case: "
+        + json.dumps(ctx, default=str)[:1500] + "\n"
+        "Reply with EXACTLY this JSON shape and nothing else: "
+        '{"summary": "<1-2 sentences IN VIETNAMESE>", '
+        '"risk_factors": ["<factor1>", "<factor2>"], '
+        '"recommendation_note": "<one sentence IN VIETNAMESE>", '
+        '"confidence": "<low|medium|high>"}. '
+        "Start your reply with { and end with }."
     )
     url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account']}/ai/run/{cfg['model']}"
     try:
@@ -57,17 +65,10 @@ def try_cloudflare_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
             headers={"Authorization": f"Bearer {cfg['token']}"},
             json={
                 "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Bạn là chuyên gia phân tích tín dụng. Output CHỈ là một "
-                            "JSON object hợp lệ — không markdown, không giải thích thêm."
-                        ),
-                    },
                     {"role": "user", "content": prompt},
                 ],
-                "max_tokens": 512,
-                "temperature": 0.2,
+                "max_tokens": 300,
+                "temperature": 0.1,
             },
             timeout=20.0,
         )
@@ -81,8 +82,16 @@ def try_cloudflare_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
             # Structured output: Workers AI already parsed the model JSON.
             data = response
         elif isinstance(response, str) and response:
-            # Raw text: extract the first balanced {...} block.
+            # Raw text: repair common small-model defects (unquoted keys,
+            # stray fences) then extract the first balanced {...} block.
+            import re
+
             text = response
+            # Repair 1: unquoted keys — {summary: ...} -> {"summary": ...}
+            # (1B models often drop quotes around keys).
+            text = re.sub(r'([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)', r'\1"\2"\3', text)
+            # Repair 2: scalar where a list is expected —
+            # "risk_factors": "x" -> "risk_factors": ["x"] (common 1B defect).
             start = text.index("{")
             depth = 1
             end = start
@@ -95,6 +104,8 @@ def try_cloudflare_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
                         end = i
                         break
             data = json.loads(text[start : end + 1])
+            if isinstance(data.get("risk_factors"), str):
+                data["risk_factors"] = [data["risk_factors"]]
         else:
             # Chat-completion fallback: choices[0].message.content
             choices = r.json().get("result", {}).get("choices") or []
