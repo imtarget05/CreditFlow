@@ -1,7 +1,7 @@
 {
   "model_name": "logistic_regression",
   "version": "logistic_regression_v001",
-  "trained_at": "2026-09-09T13:31:46.613606+00:00",
+  "trained_at": "2026-09-10T11:13:01.295126+00:00",
   "threshold": 0.2,
   "business_cost": 201.0,
   "fn_cost": 5.0,
@@ -33,5 +33,7 @@
   "mapping_version": "0.1",
   "dataset_sha256": "b65728f853cad72e3ce51a639ac96c7f04e935170e79acda637b4e5eec2f5d80",
   "seed": 42,
-  "rows": 5000
+  "rows": 5000,
+  "update_reason": "verify update banner (demo)",
+  "previous_trained_at": "2026-09-09T13:31:46.613606+00:00"
 }
