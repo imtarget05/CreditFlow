@@ -129,7 +129,7 @@ tasks/.current.md.tmp.*
 # END: repo-harness generated-runtime
 
 # Local workflow state — keep out of git (machine-local only)
-.env.example
+.env
 AGENTS.md
 CLAUDE.md
 PRODUCT.md

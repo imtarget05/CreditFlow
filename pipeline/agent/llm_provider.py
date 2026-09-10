@@ -3,8 +3,8 @@
 Reads credentials from env only — never hardcode secrets:
   CREDITFLOW_LLM_PROVIDER=cloudflare
   CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN
-  CLOUDFLARE_MODEL (default @cf/meta/llama-3.2-1b-instruct — smallest Meta
-  chat model, cheapest per free-tier Neuron budget)
+  CLOUDFLARE_MODEL (default @cf/meta/llama-3.1-8b-instruct — best free-tier
+  quality-per-Neuron for VI explanations; verified 2026-09-10 vs 1B/7B)
 
 Returns None when not configured/unreachable so the caller falls back
 to the deterministic template (offline-safe).
@@ -18,7 +18,7 @@ from typing import Any
 import httpx
 
 PROMPT_VERSION = "credit-explain-v1"
-DEFAULT_MODEL = "@cf/meta/llama-3.2-1b-instruct"
+DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct"
 
 
 class LLMUnavailable(Exception):
