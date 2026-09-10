@@ -57,13 +57,16 @@ def main() -> dict:
         return evidence
 
     run(["docker", "rm", "-f", "creditflow-api"], check=False)
-    run_proc = run([
+    run_cmd = [
         "docker", "run", "-d",
         "-p", "8080:8080",
-        "--env-file", ".env.example",
         "--name", "creditflow-api",
-        "creditflow-api",
-    ], check=False)
+    ]
+    # `.env.example` is intentionally not committed (no secrets in repo);
+    # pass it only when present on this machine.
+    if (ROOT / ".env.example").exists():
+        run_cmd[3:3] = ["--env-file", ".env.example"]
+    run_proc = run(run_cmd + ["creditflow-api"], check=False)
     evidence["docker_run"] = {
         "returncode": run_proc.returncode,
         "stdout_tail": run_proc.stdout[-400:],

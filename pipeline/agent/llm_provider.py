@@ -44,15 +44,31 @@ def try_cloudflare_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
     if cfg is None:
         return None
     prompt = (
-        "Giải thích rủi ro tín dụng (JSON keys: summary, risk_factors, "
-        "recommendation_note, confidence). Dữ liệu: " + json.dumps(ctx, default=str)[:3000]
+        "Giải thích rủi ro tín dụng. Dữ liệu: " + json.dumps(ctx, default=str)[:3000] + "\n"
+        "Trả về DUY NHẤT một JSON object với đúng các keys: "
+        '{"summary": str (<=200 ký tự), "risk_factors": [str] (tối đa 5), '
+        '"recommendation_note": str (<=200 ký tự), "confidence": "low"|"medium"|"high"}. '
+        "Không markdown, không text ngoài JSON."
     )
     url = f"https://api.cloudflare.com/client/v4/accounts/{cfg['account']}/ai/run/{cfg['model']}"
     try:
         r = httpx.post(
             url,
             headers={"Authorization": f"Bearer {cfg['token']}"},
-            json={"messages": [{"role": "user", "content": prompt}]},
+            json={
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Bạn là chuyên gia phân tích tín dụng. Output CHỈ là một "
+                            "JSON object hợp lệ — không markdown, không giải thích thêm."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": 512,
+                "temperature": 0.2,
+            },
             timeout=20.0,
         )
     except Exception:
@@ -60,19 +76,43 @@ def try_cloudflare_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
     if r.status_code != 200:
         return None
     try:
-        text = r.json()["result"]["response"]
-        start = text.index("{")
-        depth = 1
-        end = start
-        for i in range(start + 1, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    end = i
-                    break
-        data = json.loads(text[start : end + 1])
+        response = r.json().get("result", {}).get("response")
+        if isinstance(response, dict):
+            # Structured output: Workers AI already parsed the model JSON.
+            data = response
+        elif isinstance(response, str) and response:
+            # Raw text: extract the first balanced {...} block.
+            text = response
+            start = text.index("{")
+            depth = 1
+            end = start
+            for i in range(start + 1, len(text)):
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i
+                        break
+            data = json.loads(text[start : end + 1])
+        else:
+            # Chat-completion fallback: choices[0].message.content
+            choices = r.json().get("result", {}).get("choices") or []
+            content = (choices[0].get("message", {}).get("content", "") if choices else "") or ""
+            if not content:
+                return None
+            start = content.index("{")
+            depth = 1
+            end = start
+            for i in range(start + 1, len(content)):
+                if content[i] == "{":
+                    depth += 1
+                elif content[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i
+                        break
+            data = json.loads(content[start : end + 1])
     except Exception:
         return None
     return {

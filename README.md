@@ -57,6 +57,7 @@ tests/              unit + API tests (pytest)
 notebooks/          EDA + model benchmark notebooks
 Dockerfile          inference service container
 docker-compose.yml  local orchestration (api + optional mlflow)
+render.yaml         Render web service config
 docs/spec.md        product specification (source of truth)
 ```
 
@@ -190,6 +191,13 @@ Build `pip install -r requirements.txt`, Start
 `uvicorn backend.app:app --host 0.0.0.0 --port $PORT`, health check `/health`.
 Acceptance after deploy: `GET <url>/health`, `POST <url>/predict`,
 `GET <url>/model/info`. Needs your Render account — no credentials in repo.
+
+> GenAI explain layer on Render: set `CREDITFLOW_LLM_PROVIDER=cloudflare`,
+> `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_MODEL` in the
+> Render dashboard env vars (marked `sync: false` in `render.yaml` — values
+> live only in your dashboard, never in the repo). Verified working against
+> the Workers AI REST API; without them the explain falls back to the
+> deterministic template (offline-safe).
 
 ---
 

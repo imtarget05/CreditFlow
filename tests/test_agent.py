@@ -112,7 +112,17 @@ def test_fraud_score_capped_at_one():
 # ---------------------------------------------------------------------------
 # Explanation layer tests
 # ---------------------------------------------------------------------------
-def test_explanation_deterministic_fallback():
+def test_explanation_deterministic_fallback(monkeypatch):
+    # Env isolation: this test must hit the deterministic template even when
+    # real Cloudflare credentials exist in the developer's shell environment.
+    for var in (
+        "CREDITFLOW_LLM_PROVIDER",
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_API_TOKEN",
+        "CLOUDFLARE_MODEL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
     from pipeline.agent.explanations import generate_explanation, explanation_to_text
     from pipeline.agent.state import CreditState
 
