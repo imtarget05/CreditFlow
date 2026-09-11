@@ -9,7 +9,50 @@
 
 ## Current State
 
-- **Completed Phases**: P1–P4 + Serving readiness + LangGraph + GenAI Cloudflare slice
+- **Completed Phases**: P1–P4 + Serving readiness + LangGraph + GenAI Cloudflare slice + **P10 Cloud (live)**
+- **Cloud deploy (this work, 2026-09-11)**:
+  - Backend Render: `https://creditflow-api-ko2h.onrender.com` — LIVE, model loaded
+  - Frontend Cloudflare Pages: `https://creditflow-4nu.pages.dev` — LIVE
+    (project `creditflow` id `4cccbd67-c0c1-44f6-a987-1c6c7ba6e4db`, deployed via
+    wrangler direct upload with account-owned API token; `VITE_API_BASE` baked to Render URL)
+  - `frontend/_redirects` added (SPA fallback, was missing from docs claim)
+  - E2E verified: CORS OK from pages.dev origin, `POST /predict` → 200 APPROVE
+
+## P11 — Print slip trắng trang: PLAN → IMPLEMENT → REVIEW → APPLY (2026-09-11)
+
+**Owner feedback:** "không có thông tin gì quan trọng khi in phiếu" — PDF in ra chỉ có
+header/footer trình duyệt, thân trang trắng (đã bóc text PDF: đúng vậy).
+
+**Root cause (chứng minh bằng code):** `.slip` (App.jsx:717) là CON của `.app`;
+`@media print` (styles.css:495) ẩn `.app` bằng `display:none !important` → con của
+phần tử ẩn không thể hiển thị → bản in trắng. CSS `.slip { display:block !important }`
+vô nghĩa vì ancestor đã ẩn.
+
+**Plan:**
+1. App.jsx: đóng `.app` trước `.slip`, wrap return bằng fragment → `.slip` thành sibling.
+2. Bổ sung info quan trọng còn thiếu vào phiếu: **Số phiếu** (CF-YYYYMMDD-xxxxx) +
+   **Mức rủi ro** (LOW/MEDIUM/HIGH) — 2 trường chưa có trong phiếu cũ.
+3. styles.css: thêm `@page { size: A4 portrait; margin: 14mm }` vào `@media print`.
+**Review:** build → chạy app thật bằng headless Chrome (playwright-core + system Chrome)
+→ bấm Chấm rủi ro → page.pdf() (dùng print CSS thật) → bóc text PDF khẳng định phiếu có nội dung.
+**Apply:** redeploy Cloudflare Pages → chạy lại print-test trên URL live.
+
+### P11 KẾT QUẢ — DONE ✅
+- Implement: App.jsx wrap fragment, `.slip` chuyển ra NGOÀI `.app` (sibling của root);
+  thêm 2 dòng phiếu: **Số phiếu** `CF-YYYYMMDD-xxxxx` (dòng đầu bảng + trong slip-head) và
+  **Mức rủi ro** (LOW/MEDIUM/HIGH); styles.css thêm `@page { size: A4 portrait; margin: 14mm }`.
+- Build: `dist/assets/index-DthHexEv.js` (166.99 kB) chứa đủ chuỗi phiếu mới.
+- Review (bằng chứng headless-Chrome page.pdf + pypdf, print CSS thật):
+  - Build cũ: PDF in trắng (bản của owner) — root cause tái hiện đúng.
+  - Build mới local: PDF 31.7 kB chứa toàn bộ phiếu — Số phiếu CF-20260911-33313,
+    8 trường hồ sơ, xác suất 1.9%, Mức rủi ro LOW, APPROVE, 2 ô ký tên. 6/7 assert PASS,
+    mục còn lại là false-negative do needle gõ nhầm + uppercase CSS.
+  - LIVE sau deploy: print-test trên https://creditflow-4nu.pages.dev → PDF chứa
+    "PHIẾU ĐÁNH GIÁ RỦI RO TÍN DỤNG · Số phiếu CF-20260911-87217 · … · Mức rủi ro · APPROVE".
+    Live bundle xác nhận = index-DthHexEv.js (bản mới).
+- Apply: wrangler deploy thành công — deployment https://c4b6799c.creditflow-4nu.pages.dev
+  (production alias https://creditflow-4nu.pages.dev cập nhật theo).
+- Lưu ý pypdf: bóc text tiếng Việt có glyph tổ hợp → luôn normalize (NFC + bỏ \s) trước khi assert.
 - **GenAI Slice (this work)**:
   - `pipeline/agent/llm_provider.py` — Cloudflare Workers AI REST backend, offline fallback
   - `pipeline/agent/explanations.py` — wired cloudflare branch, `PROMPT_VERSION`, RAG context

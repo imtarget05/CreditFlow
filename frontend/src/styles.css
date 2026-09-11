@@ -491,6 +491,7 @@ table.grid tr.rowlink { cursor: pointer; }
 }
 
 @media print {
+  @page { size: A4 portrait; margin: 14mm; }
   body { background: #fff; font-size: 12px; }
   .app, .cmdbar, .statusbar, .foot, .banner, .readout-actions, .actions, .presets { display: none !important; }
   .slip { display: block !important; color: #000; }

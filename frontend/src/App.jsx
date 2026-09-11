@@ -352,8 +352,17 @@ export default function App() {
   const rec = result && !loading ? recommendation(result.risk_level, result.decision) : null;
   const prob = result ? Number(result.risk_probability) : 0;
 
+  // Số phiếu in: CF-YYYYMMDD-xxxxx (ngày địa phương + phần nghìn ms của lần chấm).
+  let slipNo = null;
+  if (submitted) {
+    const d = new Date(submitted.at);
+    const p2 = (n) => String(n).padStart(2, "0");
+    slipNo = `CF-${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${String(submitted.at % 100000).padStart(5, "0")}`;
+  }
+
   return (
-    <div className="app">
+    <>
+      <div className="app">
       <header className="cmdbar">
         <div className="cmdbar-row">
           <div className="brand">
@@ -713,35 +722,40 @@ export default function App() {
         <span>Model {health?.model_version ?? "—"}</span>
         <span className={online ? "ok" : "bad"}>{online ? "Backend hoạt động" : "Backend offline"}</span>
       </div>
-
-      {result && submitted && rec && (
-        <div className="slip" aria-hidden="true">
-          <div className="slip-head">
-            <h1>Phiếu đánh giá rủi ro tín dụng</h1>
-            <p>CreditFlow · {fmtTime(submitted.at)} · Model {result.model_name} · {result.model_version} (mô phỏng)</p>
-          </div>
-          <table>
-            <tbody>
-              {FIELD_ORDER.map((k) => (
-                <tr key={k}>
-                  <th>{FIELD_LABEL[k]}</th>
-                  <td>{fmtNumber(submitted.inputs[k])}</td>
-                </tr>
-              ))}
-              <tr><th>Xác suất vỡ nợ</th><td>{(prob * 100).toFixed(1)}%</td></tr>
-              <tr><th>Lý do chính</th><td>{(result.reasons || []).join("; ")}</td></tr>
-              <tr><th>Ngưỡng áp dụng</th><td>Duyệt &lt; {result.threshold?.approve_max} · Xem xét &lt; {result.threshold?.review_max} · tuned {result.threshold?.tuned_threshold}</td></tr>
-            </tbody>
-          </table>
-          <div className="slip-decision">{rec.badge} — {rec.title}</div>
-          <p>{rec.detail}</p>
-          <div className="slip-sign">
-            <div>Cán bộ tín dụng<br /><br />..............................</div>
-            <div>Trưởng phòng<br /><br />..............................</div>
-          </div>
-          <p className="slip-foot">Kết quả mang tính tham khảo từ dữ liệu mô phỏng; quyết định cuối cùng thuộc về cán bộ tín dụng.</p>
-        </div>
-      )}
     </div>
+
+    {/* Phiếu in nằm NGOÀI .app: @media print ẩn .app bằng display:none, mà con của
+        phần tử ẩn thì không thể hiển thị lại — trước đây khiến bản in trắng trang. */}
+    {result && submitted && rec && (
+      <div className="slip" aria-hidden="true">
+        <div className="slip-head">
+          <h1>Phiếu đánh giá rủi ro tín dụng</h1>
+          <p>Số phiếu {slipNo} · CreditFlow · {fmtTime(submitted.at)} · Model {result.model_name} · {result.model_version} (mô phỏng)</p>
+        </div>
+        <table>
+          <tbody>
+            <tr><th>Số phiếu</th><td>{slipNo}</td></tr>
+            {FIELD_ORDER.map((k) => (
+              <tr key={k}>
+                <th>{FIELD_LABEL[k]}</th>
+                <td>{fmtNumber(submitted.inputs[k])}</td>
+              </tr>
+            ))}
+            <tr><th>Xác suất vỡ nợ</th><td>{(prob * 100).toFixed(1)}%</td></tr>
+            <tr><th>Mức rủi ro</th><td>{result.risk_level}</td></tr>
+            <tr><th>Lý do chính</th><td>{(result.reasons || []).join("; ")}</td></tr>
+            <tr><th>Ngưỡng áp dụng</th><td>Duyệt &lt; {result.threshold?.approve_max} · Xem xét &lt; {result.threshold?.review_max} · tuned {result.threshold?.tuned_threshold}</td></tr>
+          </tbody>
+        </table>
+        <div className="slip-decision">{rec.badge} — {rec.title}</div>
+        <p>{rec.detail}</p>
+        <div className="slip-sign">
+          <div>Cán bộ tín dụng<br /><br />..............................</div>
+          <div>Trưởng phòng<br /><br />..............................</div>
+        </div>
+        <p className="slip-foot">Kết quả mang tính tham khảo từ dữ liệu mô phỏng; quyết định cuối cùng thuộc về cán bộ tín dụng.</p>
+      </div>
+    )}
+    </>
   );
 }

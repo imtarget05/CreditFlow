@@ -52,6 +52,7 @@ _ops/
 .env
 .env.*
 !.env.example
+!frontend/.env.production
 *.local.env
 .env.local
 

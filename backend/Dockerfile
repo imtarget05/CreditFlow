@@ -1,6 +1,9 @@
-# CreditFlow — inference service image
-# Build:   docker build -t creditflow-api .
-# Run:     docker run -p 8080:8080 --env-file .env creditflow-api
+# CreditFlow — inference service image (backend service).
+# Build context is the REPO ROOT (needs backend/ + pipeline/ + models/):
+#   docker compose build api
+#   docker build -f backend/Dockerfile -t creditflow-api .
+# Run via compose (preferred — đúng network/service layout của repo):
+#   docker compose up api
 # Secrets (CLOUDFLARE_*) are NOT baked in — pass via --env-file or -e flags.
 # Health:  curl http://localhost:8080/health
 FROM python:3.12-slim
