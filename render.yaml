@@ -7,6 +7,10 @@
 #                 + GenAI (Cloudflare Workers AI) — secrets marked sync:false,
 #                 fill them in the Render dashboard after first deploy.
 # After deploy, verify: GET <url>/health, POST <url>/predict, GET <url>/model/info
+#
+# SECURITY: CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are marked sync:false
+# so they are set in the Render dashboard only — never committed to this repo.
+# Get credentials from: https://dash.cloudflare.com/profile/api-tokens
 services:
   - type: web
     name: creditflow-api

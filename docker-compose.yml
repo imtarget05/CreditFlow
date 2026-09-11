@@ -1,14 +1,60 @@
-# CreditFlow — local orchestration
+# CreditFlow — local orchestration (full-stack: api + web).
+# Layout: mỗi service có Dockerfile riêng cạnh source của nó —
+#   backend/Dockerfile  (FastAPI serve trực tiếp :8080)
+#   frontend/Dockerfile + frontend/nginx.conf (nginx serve dist/ + proxy /api/)
+# Build context luôn là repo root để backend COPY được pipeline/ + models/.
+# Lệnh chuẩn:
+#   docker compose up --build -d   # cả stack
+#   docker compose up api -d       # chỉ backend (sweep endpoint đơn lẻ)
+#   docker compose down            # teardown (không đụng container repo khác)
 services:
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: creditflow-api:latest
     container_name: creditflow-api
     ports:
-      - "8080:8080"
+      - "8081:8080"
+    env_file:
+      - .env
     environment:
-      - MLFLOW_TRACKING_URI=
       - MLFLOW_DISABLE_AGENT_HINT=1
+      - CREDITFLOW_LLM_PROVIDER=cloudflare
+      # Cloudflare Workers AI credentials — load from .env (gitignored).
+      # Never hardcode secrets here. Use:
+      #   CLOUDFLARE_ACCOUNT_ID=your-account-id
+      #   CLOUDFLARE_API_TOKEN=your-api-token
+      #   CLOUDFLARE_MODEL=@cf/meta/llama-3.2-1b-instruct
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     restart: unless-stopped
+    networks:
+      - creditflow-net
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: creditflow-web:latest
+    container_name: creditflow-web
+    ports:
+      - "8080:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - creditflow-net
+
+networks:
+  creditflow-net:
+    name: creditflow-net
+    driver: bridge
 
   # Optional MLflow tracking server (enable when a remote store is wanted):
   #   docker compose --profile mlflow up --build
@@ -19,7 +65,7 @@ services:
   #   command: mlflow server --host 0.0.0.0 --port 5000
   #   ports:
   #     - "5000:5000"
-  #   volumes:
-  #     - mlflow-data:/mlflow
+  #   networks:
+  #     - creditflow-net
   # volumes:
   #   mlflow-data:
