@@ -1,5 +1,7 @@
 # CreditFlow — ML Risk Decision Support System
 
+[![CI](https://github.com/imtarget05/CreditFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/imtarget05/CreditFlow/actions/workflows/ci.yml)
+
 **Production-oriented ML application** that evaluates the risk of a credit / loan
 application from tabular data, trains and benchmarks 4 classical ML models, versions
 the serving model, and exposes a real prediction service through FastAPI + a React UI.
