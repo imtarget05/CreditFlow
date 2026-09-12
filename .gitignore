@@ -159,6 +159,9 @@ skill-observations/
 .impeccable/
 .codegraph/
 
+# Internal workflow state — keep out of git (machine-local only)
+tests/test_evidence_docs.py
+
 # Internal working docs & prep notes (machine-local only)
 docs/reference-configs/
 docs/interview/
