@@ -19,6 +19,10 @@ mlflow.db
 # Real raw data stays out of git (isolated real-data track); keep processed/ + metadata/.
 data/raw/*
 !data/raw/.gitkeep
+# SQLite ledger is a runtime artifact (pipeline/storage/ledger.py creates it).
+data/creditflow_ledger.db
+# LangGraph checkpoint file (pipeline/agent/checkpointer.py creates it).
+data/creditflow_checkpoints.pkl
 
 # Project-specific
 artifacts/
@@ -51,7 +55,6 @@ _ops/
 # Environment
 .env
 .env.*
-!.env.example
 !frontend/.env.production
 *.local.env
 .env.local
@@ -155,3 +158,13 @@ opencode.jsonc
 skill-observations/
 .impeccable/
 .codegraph/
+
+# Internal working docs & prep notes (machine-local only)
+docs/reference-configs/
+docs/interview/
+docs/researches/
+implementation_plan.md
+
+# Editor / leftover backups
+*.bak
+*.bak.*
