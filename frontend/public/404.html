@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Redirecting...</title>
+    <script>
+      // GitHub Pages SPA fallback: redirect 404 to index.html with original path
+      // This preserves the client-side route so React Router can handle it
+      sessionStorage.setItem('spa_fallback_path', window.location.pathname);
+      window.location.replace('/CreditFlow/');
+    </script>
+    <noscript>
+      <meta http-equiv="refresh" content="0;url=/CreditFlow/" />
+    </noscript>
+  </head>
+  <body>
+    <p>Redirecting to home page...</p>
+  </body>
+</html>
