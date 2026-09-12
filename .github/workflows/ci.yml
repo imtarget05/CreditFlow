@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Backend — pytest (unit + API + LangGraph workflow)
@@ -31,7 +38,7 @@ jobs:
       - name: Run tests (exclude live-network integration tests)
         run: python -m pytest tests/ -q -m "not integration" --strict-markers
 
-  frontend:
+  build-frontend:
     name: Frontend — npm ci + production build
     runs-on: ubuntu-latest
     defaults:
@@ -58,3 +65,4 @@ jobs:
           test -f dist/index.html
           test -f dist/_redirects
           echo "dist/ OK: index.html + _redirects present"
+
