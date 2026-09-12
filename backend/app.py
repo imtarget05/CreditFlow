@@ -31,6 +31,18 @@ from pydantic import BaseModel, Field, field_validator
 
 from backend.predict_service import load_production_model, predict_risk, to_model_units
 from pipeline.monitoring.drift import detect_drift
+from pipeline.storage.ledger import (
+    init_db as ledger_init_db,
+    record_application,
+    record_disbursement,
+    update_application_status,
+    get_application_by_thread,
+    list_applications,
+    list_disbursements,
+    STATUS_APPROVED,
+    STATUS_PENDING_REVIEW,
+    STATUS_REJECTED,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_JSON = ROOT / "models" / "production" / "benchmark_results.json"
@@ -137,6 +149,8 @@ prediction_window: deque = deque(maxlen=500)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.pipeline, app.state.meta = load_production_model()
+    # Durable ledger for applications + disbursements (core-banking slice).
+    ledger_init_db()
     yield
 
 
@@ -259,9 +273,36 @@ def runtime_metrics():
 # ---------------------------------------------------------------------------
 # LangGraph decision workflow endpoints (spec §16 architecture)
 # ---------------------------------------------------------------------------
-# Active graph instances keyed by thread_id. InMemorySaver requires the same
-# graph instance for start + resume, so we keep them here.
-_active_graphs: dict[str, Any] = {}
+# One shared compiled graph.  Workflow state lives in the file-backed
+# checkpointer (keyed by thread_id), NOT in RAM — a server restart restores
+# every paused workflow from the checkpoint file, so
+# POST /predict/graph/{thread_id}/approve works across restarts.
+_shared_graph: Any = None
+
+
+def _build_shared_graph():
+    """Build the workflow graph once, with a durable FileCheckpointSaver."""
+    global _shared_graph
+    if _shared_graph is None:
+        from pipeline.agent.graph import build_credit_graph
+        from pipeline.agent.checkpointer import FileCheckpointSaver
+
+        checkpointer = getattr(app.state, "checkpointer", None)
+        if checkpointer is None:
+            checkpointer = FileCheckpointSaver()
+            app.state.checkpointer = checkpointer
+        _shared_graph = build_credit_graph(
+            app.state.pipeline, app.state.meta, checkpointer=checkpointer
+        )
+    return _shared_graph
+
+
+def _reset_shared_graph() -> None:
+    """Drop the shared graph + checkpointer (tests / simulated restart)."""
+    global _shared_graph
+    _shared_graph = None
+    if hasattr(app.state, "checkpointer"):
+        del app.state.checkpointer
 
 
 class GraphStartRequest(BaseModel):
@@ -276,9 +317,14 @@ class GraphApprovalRequest(BaseModel):
 
 
 def _get_graph(thread_id: str):
-    """Retrieve an active graph instance by thread_id."""
-    graph = _active_graphs.get(thread_id)
-    if graph is None:
+    """Return the shared graph after verifying the thread has checkpoint state.
+
+    A thread with no checkpoint has never started (or predates checkpoint
+    persistence) — resume cannot work, so 404 as before.
+    """
+    graph = _build_shared_graph()
+    state = graph.get_state(config={"configurable": {"thread_id": thread_id}})
+    if not state.values:
         raise HTTPException(
             status_code=404,
             detail=f"workflow {thread_id} not found — may have expired or never started",
@@ -294,11 +340,9 @@ def start_graph_workflow(req: GraphStartRequest):
     pauses at human_approval — use ``POST /predict/graph/{thread_id}/approve``
     to resume.
     """
-    from pipeline.agent.graph import build_credit_graph, create_workflow_run_id
+    from pipeline.agent.graph import create_workflow_run_id
 
-    pipeline = app.state.pipeline
-    meta = app.state.meta
-    graph = build_credit_graph(pipeline, meta)
+    graph = _build_shared_graph()
     thread_id = create_workflow_run_id()
 
     initial_state = {"customer_data": req.customer_data, "request_meta": {}}
@@ -311,7 +355,26 @@ def start_graph_workflow(req: GraphStartRequest):
         state = graph.get_state(config=run_config)
         result = dict(state.values)
 
-    _active_graphs[thread_id] = graph
+    # --- durable persistence: record the application in the SQLite ledger ---
+    decision = result.get("decision", "UNKNOWN")
+    app_status = {
+        "REVIEW": STATUS_PENDING_REVIEW,
+        "APPROVE": STATUS_APPROVED,
+        "REJECT": STATUS_REJECTED,
+    }.get(decision, STATUS_PENDING_REVIEW)
+    try:
+        ledger_row_id = record_application(
+            thread_id=thread_id,
+            customer_data=req.customer_data,
+            risk_score=float(result.get("risk_score", 0.0)),
+            risk_level=result.get("risk_level", "UNKNOWN"),
+            decision=decision,
+            status=app_status,
+        )
+    except Exception:
+        metrics.error()
+        ledger_row_id = None
+
     meta = result.get("explanation_meta", {})
     if meta.get("source") == "langchain_llm":
         metrics.llm["requests"] += 1
@@ -330,6 +393,8 @@ def start_graph_workflow(req: GraphStartRequest):
         "explanation_meta": meta,
         "audit_trail": result.get("audit_trail", []),
         "workflow_complete": result.get("workflow_complete", False),
+        "ledger_application_id": ledger_row_id,
+        "ledger_status": app_status,
     }
 
 
@@ -356,6 +421,38 @@ def approve_graph_workflow(thread_id: str, req: GraphApprovalRequest):
         metrics.llm["latency_sum_ms"] += meta.get("latency_ms", 0)
     else:
         metrics.llm["errors"] += 1
+
+    # --- durable persistence: update ledger + write the disbursement entry ---
+    action_approved = req.action.strip().lower() in (
+        "approve", "approved", "accept", "yes",
+    )
+    new_status = STATUS_APPROVED if action_approved else STATUS_REJECTED
+    try:
+        update_application_status(
+            thread_id,
+            new_status,
+            decision=result.get("decision", "UNKNOWN"),
+        )
+    except Exception:
+        metrics.error()
+
+    disbursement = None
+    if action_approved:
+        # The application row persisted at workflow start is the source of
+        # truth for the loan amount (the approve request carries none).
+        try:
+            app_row = get_application_by_thread(thread_id)
+            if app_row is not None:
+                disbursement = record_disbursement(
+                    application_id=app_row["id"],
+                    loan_amount=float(
+                        app_row["customer_data"].get("loan_amount", 0.0)
+                    ),
+                )
+        except Exception:
+            metrics.error()
+            disbursement = None
+
     return {
         "thread_id": thread_id,
         "application_id": result.get("application_id", ""),
@@ -366,6 +463,8 @@ def approve_graph_workflow(thread_id: str, req: GraphApprovalRequest):
         "explanation_meta": meta,
         "audit_trail": result.get("audit_trail", []),
         "workflow_complete": result.get("workflow_complete", False),
+        "ledger_status": new_status,
+        "disbursement": disbursement,
     }
 
 
@@ -394,9 +493,14 @@ def get_graph_state(thread_id: str):
 
 @app.get("/audit/{application_id}")
 def get_audit_trail(application_id: str):
-    """Get the audit trail for a completed or in-progress workflow."""
-    # Search through stored graph instances for the application_id
-    for thread_id, graph in _active_graphs.items():
+    """Get the audit trail for a completed or in-progress workflow.
+
+    Walks every thread in the (file-backed) checkpointer, so the trail is
+    available for workflows started before the current process too.
+    """
+    graph = _build_shared_graph()
+    checkpointer = app.state.checkpointer
+    for thread_id in checkpointer.threads():
         run_config = {"configurable": {"thread_id": thread_id}}
         state = graph.get_state(config=run_config)
         if state.values.get("application_id") == application_id:
@@ -411,4 +515,29 @@ def get_audit_trail(application_id: str):
         status_code=404,
         detail=f"application {application_id} not found",
     )
+
+
+# ---------------------------------------------------------------------------
+# Core-banking evidence endpoints (durable SQLite ledger)
+# ---------------------------------------------------------------------------
+@app.get("/api/applications")
+def list_loan_applications(status: str | None = None):
+    """Evidence endpoint: all loan applications in the durable ledger.
+
+    Optional filter: ``?status=PENDING_REVIEW|APPROVED|REJECTED``.
+    """
+    rows = list_applications(status=status)
+    return {"count": len(rows), "applications": rows}
+
+
+@app.get("/api/disbursements")
+def list_disbursement_ledger():
+    """Evidence endpoint: the actual disbursement general ledger."""
+    rows = list_disbursements()
+    total = sum(float(r.get("loan_amount") or 0.0) for r in rows)
+    return {
+        "count": len(rows),
+        "total_disbursed": round(total, 2),
+        "disbursements": rows,
+    }
 # ---------------------------------------------------------------------------

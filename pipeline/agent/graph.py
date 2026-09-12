@@ -26,6 +26,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
+from pipeline.agent.checkpointer import FileCheckpointSaver
 from pipeline.agent.state import CreditState
 from pipeline.agent.nodes import (
     load_application,
@@ -43,7 +44,11 @@ from pipeline.agent.nodes import (
 )
 
 
-def build_credit_graph(pipeline: Any, meta: dict) -> CompiledStateGraph:
+def build_credit_graph(
+    pipeline: Any,
+    meta: dict,
+    checkpointer: Any = None,
+) -> CompiledStateGraph:
     """Build and compile the credit-decision LangGraph.
 
     Parameters
@@ -54,6 +59,12 @@ def build_credit_graph(pipeline: Any, meta: dict) -> CompiledStateGraph:
     meta : dict
         The production ``meta.json`` contents (model version, tuned threshold,
         costs, etc.).
+    checkpointer : BaseCheckpointSaver, optional
+        Checkpoint saver for pause/resume of the human-approval interrupt.
+        Defaults to ``InMemorySaver`` (RAM only, fine for one-off runs).
+        Pass ``FileCheckpointSaver()`` so paused workflows survive a process
+        restart and ``POST /predict/graph/{thread_id}/approve`` can resume
+        them.
     """
     # Bind the model/pipeline to the risk_model node via closure
     risk_node = make_risk_model(pipeline, meta)
@@ -100,9 +111,11 @@ def build_credit_graph(pipeline: Any, meta: dict) -> CompiledStateGraph:
     sg.add_edge("execute", "audit")
     sg.add_edge("audit", END)
 
-    # InMemorySaver enables pause/resume for human approval interrupts.
-    # For production, swap to SqliteSaver for persistence across restarts.
-    checkpointer = InMemorySaver()
+    # InMemorySaver (default) enables pause/resume for human approval
+    # interrupts.  Pass FileCheckpointSaver() to persist the paused state
+    # across process restarts (pipeline/agent/checkpointer.py).
+    if checkpointer is None:
+        checkpointer = InMemorySaver()
     return sg.compile(checkpointer=checkpointer)
 
 

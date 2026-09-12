@@ -3,6 +3,10 @@
 **Production-oriented ML application** that evaluates the risk of a credit / loan
 application from tabular data, trains and benchmarks 4 classical ML models, versions
 the serving model, and exposes a real prediction service through FastAPI + a React UI.
+Borderline applications route through a **LangGraph decision workflow with a
+human-approval interrupt**, and every approved loan is recorded in a **durable
+SQLite core-banking ledger** (contract + tamper-evident disbursement record) that
+survives server restarts.
 
 > ⚠️ **Proxy dataset.** The dataset under `data/` is **synthetic** (deterministic,
 > seeded). It exists to exercise the real production pipeline end-to-end. It is **not**
@@ -33,13 +37,22 @@ Loan Application → Validation → Cleaning → EDA
 
 ```
 Frontend (React/Vite) :5173 ──proxy /api──► FastAPI :8080
-                                              ├─ /health     service + model status
-                                              ├─ /predict    real ML prediction
-                                              ├─ /model/info production model + metrics
-                                              ├─ /metrics    runtime + benchmark
-                                              └─ /drift      ML drift monitoring (P11)
-                                               └─ /llm/info   LLM provider status (no secrets)
+                                              ├─ /health                            service + model status
+                                              ├─ /predict                           real ML prediction
+                                              ├─ /model/info                        production model + metrics
+                                              ├─ /metrics                           runtime + benchmark
+                                              ├─ /drift                             ML drift monitoring (PSI)
+                                              ├─ /llm/info                          LLM provider status (no secrets)
+                                              ├─ POST /predict/graph                start decision workflow
+                                              ├─ POST /predict/graph/{id}/approve   human approval → resume + disburse
+                                              ├─ GET  /predict/graph/{id}           workflow state
+                                              ├─ GET  /audit/{application_id}       audit trail
+                                              ├─ GET  /api/applications             loan application ledger (SQLite)
+                                              └─ GET  /api/disbursements            disbursement ledger (SQLite)
 FastAPI ─► Prediction Service ─► preprocessor + model (models/production/)
+FastAPI ─► LangGraph decision workflow ─► interrupt at REVIEW ─► FileCheckpointSaver
+                                              (data/creditflow_checkpoints.pkl — paused state survives restart)
+FastAPI ─► SQLite ledger (data/creditflow_ledger.db): loan_applications + disbursements
 Training: scripts/train_models.py → data/creditflow_dataset.csv
           → models/production/{pipeline.joblib, meta.json, benchmark_results.csv, reference_stats.json}
 ```
@@ -49,6 +62,8 @@ Training: scripts/train_models.py → data/creditflow_dataset.csv
 ```
 backend/            FastAPI app + prediction service
 frontend/           React + Vite UI
+pipeline/agent/     LangGraph decision workflow (state machine, human-approval interrupt, file-backed checkpoint saver)
+pipeline/storage/   SQLite core-banking ledger (loan_applications + disbursements)
 pipeline/           data gen, validation, feature engineering, modeling, threshold
 scripts/            train_models.py (benchmark + artifact + optional MLflow)
 models/production/  trained model + meta + benchmark results (committed)
@@ -113,6 +128,10 @@ request/latency/error counters and the 4-model benchmark.
 
 ```bash
 python -m pytest tests/ -q
+# 116 passed — unit + API + LangGraph workflow + ledger/disbursement E2E +
+# checkpoint persistence (restart survival) + drift + deploy checks
+```
+
 ---
 
 ## API
@@ -135,6 +154,46 @@ Decision buckets (configurable, `pipeline/modeling/threshold.py`):
 
 Validation: missing field / wrong type / negative value → **422** with detail
 (Pydantic + business rules in `pipeline/validation/schemas.py`).
+
+---
+
+## Approval workflow — human-in-the-loop, restart-safe
+
+Borderline applications (REVIEW band) do not get an automatic decision. The
+LangGraph workflow pauses at a `human_approval` interrupt and waits for a
+credit analyst. The full end-to-end flow:
+
+```bash
+# 1. Submit an application — a borderline profile pauses the workflow in REVIEW
+curl -s -X POST http://localhost:8080/predict/graph \
+  -H 'Content-Type: application/json' \
+  -d '{"customer_data":{"income":8000000,"age":35,"employment_years":0.5,
+       "loan_amount":120000000,"loan_term":36,"existing_debt":2000000,
+       "credit_history":9,"previous_defaults":2}}'
+# → {"thread_id": "run-…", "decision": "REVIEW", "approval_required": true,
+#    "ledger_application_id": 1, "ledger_status": "PENDING_REVIEW"}
+
+# 2. Analyst approves — the workflow resumes and the loan is disbursed to the ledger
+curl -s -X POST http://localhost:8080/predict/graph/run-…/approve \
+  -H 'Content-Type: application/json' -d '{"action":"approve","note":"ok"}'
+# → {"decision": "APPROVE", "workflow_complete": true, "ledger_status": "APPROVED",
+#    "disbursement": {"contract_code": "HDTD-20260912-0003", "loan_amount": 120000000.0,
+#                     "status": "COMPLETED", "ledger_hash": "2f356aaf…"}}
+
+# 3. Inspect the durable ledgers
+curl -s http://localhost:8080/api/applications
+curl -s http://localhost:8080/api/disbursements   # + total_disbursed
+```
+
+**Durable by design — two independent persistence layers:**
+
+| Layer | Storage | Survives restart? | What it holds |
+| ----- | ------- | ----------------- | ------------- |
+| Loan ledger | SQLite `data/creditflow_ledger.db` (`pipeline/storage/`) | ✅ | Application lifecycle (`PENDING_REVIEW → APPROVED/REJECTED`) + disbursements with per-day contract codes (`HDTD-YYYYMMDD-XXXX`) and a SHA-256 `ledger_hash` over immutable fields — any manual row edit breaks the hash (tamper-evident) |
+| Workflow state | `data/creditflow_checkpoints.pkl` (`FileCheckpointSaver`, stdlib-only subclass of LangGraph's `InMemorySaver`) | ✅ | The full paused graph state keyed by `thread_id` — after a server restart, `POST /predict/graph/{thread_id}/approve` resumes the exact paused workflow (audit trail preserved across processes) |
+
+Rejecting (`"action":"reject"`) resumes the workflow to the audit terminal and
+writes **no** disbursement — money movement only ever follows an approval.
 
 ---
 
@@ -214,9 +273,11 @@ Acceptance after deploy: `GET <url>/health`, `POST <url>/predict`,
 | MLflow tracking         | Real — experiment `creditflow-risk` (parent + 4 nested runs/model); backend `sqlite:///mlflow.db`, view with `MLFLOW_TRACKING_URI=sqlite:///mlflow.db mlflow ui` |
 | MLflow registry/version | Real — registered model `creditflow-risk` (latest READY); version in `models/production/meta.json` answers "which model is serving?" via `GET /model/info` |
 | Docker                  | Dockerfile + compose; native runtime verified, Docker runtime pending (daemon off) |
-| Cloud deployment        | Not deployed — `render.yaml` committed (free tier); see roadmap |
+| Cloud deployment        | Deployed on Render free tier + Cloudflare Pages; `render.yaml` committed |
 | System monitoring       | `GET /metrics`: request/latency/error counters + uptime      |
 | ML drift monitoring     | Implemented — `GET /drift`: PSI-based feature + prediction drift vs training reference (NO_DRIFT / DRIFT_DETECTED / INSUFFICIENT_DATA) |
+| Approval workflow       | LangGraph state machine with human-approval interrupt; paused state persisted to disk and resumable after a server restart |
+| Core-banking ledger     | SQLite `data/creditflow_ledger.db` — loan application lifecycle + disbursements (contract codes, SHA-256 tamper-evident ledger hash); evidence APIs `GET /api/applications`, `GET /api/disbursements` |
 
 ---
 
@@ -234,7 +295,9 @@ Acceptance after deploy: `GET <url>/health`, `POST <url>/predict`,
   prediction distribution shift vs the training reference. It reports distribution
   drift only — **not** model performance degradation (that requires ground-truth
   labels, unavailable at inference time).
+* The approval workflow and ledgers are demo scope: disbursement is recorded as an
+  auditable ledger entry (contract + hash) — no external money-transfer or core-banking
+  integration. LLM explanations never decide; policy + cost-tuned threshold decide.
 
-See `docs/spec.md`, `plans/prds/`, and `docs/qa/manual-acceptance.md` for details and
+See `docs/spec.md` and `docs/qa/manual-acceptance.md` for details and
 the manual acceptance test evidence.
-```

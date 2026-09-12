@@ -23,7 +23,7 @@ from contextlib import ExitStack
 
 from fastapi.testclient import TestClient
 
-from backend.app import app, _active_graphs
+from backend.app import app
 from backend.predict_service import load_production_model
 
 _stack = ExitStack()
