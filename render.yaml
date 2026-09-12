@@ -1,0 +1,37 @@
+# CreditFlow — deploy on Render (free tier)
+# Dashboard: https://dashboard.render.com → New → Web Service → connect this repo.
+# Build Command : pip install -r requirements.txt
+# Start Command : uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+# Health check  : /health
+# Env vars      : PYTHON_VERSION=3.12.7, MLFLOW_DISABLE_AGENT_HINT=1
+#                 + GenAI (Cloudflare Workers AI) — secrets marked sync:false,
+#                 fill them in the Render dashboard after first deploy.
+# After deploy, verify: GET <url>/health, POST <url>/predict, GET <url>/model/info
+#
+# SECURITY: CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are marked sync:false
+# so they are set in the Render dashboard only — never committed to this repo.
+# Get credentials from: https://dash.cloudflare.com/profile/api-tokens
+services:
+  - type: web
+    name: creditflow-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: MLFLOW_DISABLE_AGENT_HINT
+        value: "1"
+      # GenAI explain layer — Cloudflare Workers AI.
+      # sync:false → set the real values in Render dashboard (never in repo).
+      - key: CREDITFLOW_LLM_PROVIDER
+        value: cloudflare
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      # Free-tier friendly: cheapest llama in Neurons/M tokens.
+      - key: CLOUDFLARE_MODEL
+        value: "@cf/meta/llama-3.2-1b-instruct"

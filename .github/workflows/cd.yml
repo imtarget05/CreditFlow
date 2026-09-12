@@ -1,0 +1,147 @@
+name: CD
+
+on:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  packages: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: cd-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_API: ${{ github.repository }}/creditflow-api
+  IMAGE_WEB: ${{ github.repository }}/creditflow-web
+
+jobs:
+  build-api-image:
+    name: Docker — build + push creditflow-api to GHCR
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_API }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=,format=short
+
+      - name: Build + push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-web-image:
+    name: Docker — build + push creditflow-web to GHCR
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_WEB }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=,format=short
+
+      - name: Build + push Web image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: frontend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-frontend-pages:
+    name: Deploy frontend to GitHub Pages
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install + build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  notify-render:
+    name: Trigger Render redeploy (optional webhook)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    needs: [build-api-image, deploy-frontend-pages]
+    steps:
+      - name: Trigger Render backend redeploy
+        run: |
+          # Render auto-deploys from GitHub native integration by default.
+          # If you set up a Render webhook URL in repo Settings → Secrets,
+          # uncomment the curl below to trigger a redeploy programmatically:
+          #
+          # curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}" \
+          #   -H "Content-Type: application/json" \
+          #   -d '{"branch": "main"}'
+          echo "Render redeploy skipped — use Render's native GitHub integration or set RENDER_DEPLOY_HOOK secret"
