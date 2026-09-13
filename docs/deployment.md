@@ -62,7 +62,7 @@ curl https://creditflow-api-ko2h.onrender.com/model/info
    - Deploy via `actions/deploy-pages@v4` (branch `gh-pages`)
 3. `frontend/vite.config.js` giữ `base: '/CreditFlow/'` để routing/assets đúng sub-path.
 4. `VITE_API_BASE=https://creditflow-api-ko2h.onrender.com` (baked at build time — build lại nếu đổi URL backend).
-5. SPA fallback: `frontend/_redirects` (`/* /index.html 200`) và `frontend/public/404.html` (redirect về `/CreditFlow/`) đã commit — xử lý deep-route refresh trên GitHub Pages.
+5. SPA fallback: `frontend/public/404.html` (redirect mọi deep path lạ về `/CreditFlow/`) đã commit — xử lý unknown-path refresh trên GitHub Pages. Lưu ý: GitHub Pages trả HTTP 404 kèm nội dung trang redirect (browser chạy JS sẽ chuyển về app). `_redirects` chỉ là di sản Cloudflare Pages, không có tác dụng trên GitHub Pages — giữ lại để tham chiếu, không dùng cho fallback.
 
 ### Verify Frontend
 
@@ -145,7 +145,7 @@ Docker images `creditflow-api` / `creditflow-web` cũng được auto-push lên 
 
 | Issue | Fix |
 |-------|-----|
-| Frontend 404 on refresh (SPA fallback FAIL) | Đã xử lý: `frontend/public/404.html` (redirect về `/CreditFlow/`) + bước copy trong `cd.yml` (`cp public/404.html dist/404.html`) đảm bảo artifact có 404.html. Nếu vẫn 404 sau deploy, kiểm tra artifact `frontend/dist` có `404.html` + `github-pages` environment đã enable |
+| Frontend 404 on refresh (unknown deep path) | Đã xử lý: `frontend/public/404.html` (redirect về `/CreditFlow/`) + bước copy trong `cd.yml` (`cp public/404.html dist/404.html`) đảm bảo artifact có 404.html. Đây là giới hạn đã biết của GitHub Pages: unknown deep path trả HTTP 404 **cùng nội dung trang redirect** (browser có JS tự chuyển về app) — app là single-view không router nên không mất trạng thái route. `_redirects` là file Cloudflare-Pages-only, GitHub Pages bỏ qua — giữ lại chỉ để tham chiếu |
 | Frontend can't reach API | Confirm `VITE_API_BASE` lúc build trỏ đúng Render URL (`https://creditflow-api-ko2h.onrender.com`); build lại sau khi đổi env |
 | Backend 502 / request đầu ~30s | Render free-tier cold-start sau sleep — chờ rồi retry 1 lần; nếu vẫn 502, check logs in Render dashboard, ensure `requirements.txt` installs cleanly |
 | CORS errors in browser | Backend CORS now allows `*` — clear browser cache and retry |
