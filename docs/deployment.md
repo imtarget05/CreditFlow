@@ -12,7 +12,7 @@ GitHub Pages (frontend) ──→ Render (FastAPI backend) ──→ Cloudflare 
 | Frontend (React/Vite SPA) | GitHub Pages | `https://imtarget05.github.io/CreditFlow/` |
 | Backend (FastAPI + model) | Render Free Tier | `https://creditflow-api-ko2h.onrender.com` |
 | LLM explanations | Cloudflare Workers AI | REST API (called by backend, NOT Pages) |
-| Docker images | GHCR | `ghcr.io/<owner>/CreditFlow/creditflow-{api,web}` |
+| Docker images | GHCR | `ghcr.io/<owner>/creditflow/creditflow-{api,web}` |
 
 > Lịch sử: Cloudflare Pages cũ `creditflow-4nu.pages.dev` đã decommission (trả 403) — không còn trong stack, chỉ giữ 1 dòng này làm tham chiếu.
 
@@ -139,7 +139,7 @@ curl http://localhost:8081/health        # backend
 curl http://localhost:8080/              # frontend (nginx)
 ```
 
-Docker images `creditflow-api` / `creditflow-web` cũng được auto-push lên GHCR (`ghcr.io/<owner>/CreditFlow/...`) từ `cd.yml` jobs `build-api-image` / `build-web-image`.
+Docker images `creditflow-api` / `creditflow-web` cũng được auto-push lên GHCR (`ghcr.io/<owner>/creditflow/...`) từ `cd.yml` jobs `build-api-image` / `build-web-image`.
 
 ## Troubleshooting
 

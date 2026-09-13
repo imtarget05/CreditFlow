@@ -1,4 +1,4 @@
-"""Tests for Cloudflare Pages deployment artifacts (frontend + Render backend).
+"""Tests for GitHub Pages deployment artifacts (frontend + Render backend).
 
 No live Cloudflare API calls. Network-dependent tests are marked
 ``pytest.mark.integration`` so they still run, but are identifiable.
@@ -36,7 +36,7 @@ SAMPLE_PAYLOAD = {
 
 
 # ---------------------------------------------------------------------------
-# Cloudflare Pages frontend artifacts
+# GitHub Pages frontend artifacts
 # ---------------------------------------------------------------------------
 
 def test_pages_env_production_points_to_render_backend():
@@ -98,8 +98,8 @@ def test_render_backend_predict_endpoint_reachable():
 # Documentation
 # ---------------------------------------------------------------------------
 
-def test_deployment_documents_render_and_cloudflare_pages():
+def test_deployment_documents_render_and_github_pages():
     assert DEPLOY_DOCS.exists(), f"missing {DEPLOY_DOCS}"
     content = DEPLOY_DOCS.read_text(encoding="utf-8")
     assert "Render" in content, "deployment.md must mention Render"
-    assert "Cloudflare Pages" in content, "deployment.md must mention Cloudflare Pages"
+    assert "GitHub Pages" in content, "deployment.md must mention GitHub Pages"
