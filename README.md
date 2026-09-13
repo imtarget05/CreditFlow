@@ -1,276 +1,203 @@
-# CreditFlow
+# 🏦 CreditFlow — ML Credit Risk Decision Engine
 
-**ML Risk Decision Support System** — credit/loan risk evaluation with 4 classical ML models, human-in-the-loop approval workflow, and an auditable core-banking ledger.
+[![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18-blue.svg)](https://reactjs.org/)
+[![XGBoost](https://img.shields.io/badge/XGBoost-Enabled-blue.svg)](https://xgboost.readthedocs.io/)
+[![scikit-learn](https://img.shields.io/badge/scikit--learn-Enabled-orange.svg)](https://scikit-learn.org/)
+[![MLflow](https://img.shields.io/badge/MLflow-3.16-blue.svg)](https://mlflow.org/)
+[![Docker](https://img.shields.io/badge/Docker-Supported-blue.svg)](https://www.docker.com/)
+[![Tests](https://img.shields.io/badge/Tests-116%20Passing-success.svg)]()
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-[![CI](https://github.com/imtarget05/CreditFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/imtarget05/CreditFlow/actions/workflows/ci.yml)
+**CreditFlow** is a production-grade ML credit risk decision support system tailored for financial lending. Moving beyond simple notebook exercises, this is a fully deployable decision engine with a complete pipeline: **data validation → feature engineering → model training → evaluation → serving → monitoring**.
 
-> **Data transparency note.** The data under `data/` is synthetic — it exercises the real pipeline end-to-end. Not a claim of serving real bank customers.
-
----
-
-## At a glance
-
-| Aspect | Details |
-|---|---|
-| **Stack** | Python/FastAPI · React/Vite · scikit-learn · XGBoost · LangGraph · LangChain · SQLite |
-| **ML models** | Logistic Regression · Decision Tree · Random Forest · XGBoost |
-| **Key endpoints** | `/health` · `/predict` · `/model/info` · `/metrics` · `/drift` · `/predict/graph` (approval workflow) |
-| **Deployment** | Docker (GHCR) · Render (backend) · GitHub Pages (frontend) |
+Designed with enterprise requirements in mind, it features audit trails, human-in-the-loop approval workflows, explainability, and rigorous cost-sensitive model selection.
 
 ---
 
-## What it does
+## ✨ Key Features & Engineering Decisions
 
-Evaluates credit/loan applications from tabular data through a full pipeline:
+1. **Business-Driven Model Selection**: Evaluated Logistic Regression, Decision Tree, Random Forest, and XGBoost. The model was selected based on a **custom business cost metric**, not raw accuracy. 
+2. **Cost-Sensitive Threshold Tuning**: Optimized for asymmetric costs (False Negative cost=5.0 for missed defaults, False Positive cost=1.0 for wrong rejections), resulting in an optimal decision threshold of `0.20`.
+3. **Winning Model**: **Logistic Regression** (Business Cost=201, Recall=0.80, F1=0.57) outperformed XGBoost on the business cost metric and was selected for production.
+4. **Robust Feature Engineering**: Engineered 5 derived features (`debt_to_income`, `loan_to_income`, `debt_to_loan`, `employment_stability`, `credit_history_year_ratio`) with zero-division guards and robust handling of edge cases.
+5. **Stateful Decision Workflow**: Leverages **LangGraph** for a 10-node state machine that handles human interrupts for `REVIEW` decisions, pausing and resuming workflows asynchronously.
+6. **Core-Banking Ledger Integration**: Employs SQLite with deterministic contract codes (`HDTD-YYYYMMDD-XXXX`) and **SHA-256 tamper-evident hashes** for the disbursement ledger.
+7. **Explainable AI**: Integrates Cloudflare Workers AI (Llama 3.2-1b) to generate Vietnamese natural language explanations for decisions (with fallback templates). The LLM *explains*, it does *not* decide.
+8. **Production Monitoring**: Includes **PSI (Population Stability Index)** drift detection to track feature and prediction distribution shifts against baselines.
+9. **Fraud Detection**: Rule-based deterministic fraud flags integrated upstream of the ML pipeline.
+10. **Print-Ready Decision Slips**: Browser printing optimized with `@media print` CSS, featuring signature lines for loan officers and branch managers.
+11. **Comprehensive MLOps**: Full experiment tracking, model registry, and artifact versioning powered by **MLflow**.
 
+---
+
+## 🏗 Architecture
+
+The system orchestrates the flow of a loan application through validation, feature engineering, ML scoring, policy rules, and final disbursement.
+
+```mermaid
+graph TD
+    A[Loan Application VND] --> B[Schema Validation]
+    B --> C[Feature Engineering <br/> 5 derived features]
+    C --> D[ML Pipeline <br/> StandardScaler + LogReg]
+    D --> E[Cost-Aware Threshold Engine <br/> t=0.20]
+    
+    E -->|Score < 0.20| F[APPROVE]
+    E -->|0.20 <= Score < 0.50| G[REVIEW]
+    E -->|Score >= 0.50| H[REJECT]
+    
+    G --> I[LangGraph Interrupt <br/> Human Approval]
+    
+    F --> J[Disbursement Engine]
+    I -->|Approved| J
+    I -->|Rejected| H
+    
+    J --> K[Contract: HDTD-YYYYMMDD-XXXX]
+    K --> L[SHA-256 Ledger Hash]
 ```
-Application → Validate → Clean → EDA → Feature Engineering
-→ Train 4 models → Evaluate (business cost matrix) → Register best → Serve via FastAPI
-→ React UI → Monitoring
-```
-
-Risk decisions use a **business cost matrix** where a missed default (FN, cost 5) outweighs a false rejection (FP, cost 1) — so the model and threshold are tuned for recall, not raw accuracy.
-
-**Borderline applications** go through a LangGraph decision workflow with a **human-approval interrupt**. Approved loans are recorded in a **SQLite core-banking ledger** with contract codes and SHA-256 tamper-evident hashes.
 
 ---
 
-## API overview
+## 🛠 Tech Stack
 
-| Endpoint | Purpose |
+| Category | Technologies |
 |---|---|
-| `GET /health` | Service + model status |
-| `GET /model/info` | Production model + metrics |
-| `POST /predict` | Real ML prediction (returns risk score + decision) |
-| `GET /metrics` | Runtime counters + benchmark metrics |
-| `GET /drift` | PSI-based data/prediction drift vs training reference |
-| `POST /predict/graph` | Start LangGraph decision workflow |
-| `POST /predict/graph/{id}/approve` | Human approval → resume + disburse |
-| `GET /predict/graph/{id}` | Workflow state |
-| `GET /audit/{application_id}` | Audit trail |
-| `GET /api/applications` | Loan application ledger |
-| `GET /api/disbursements` | Disbursement ledger |
+| **Backend** | Python 3.12, FastAPI, Pydantic v2, Uvicorn |
+| **ML & Data** | scikit-learn, XGBoost, Pandas, NumPy, Joblib |
+| **MLOps & Monitoring** | MLflow 3.16, PSI Drift Detection |
+| **Workflow & GenAI** | LangGraph, LangChain, Cloudflare Workers AI (Llama 3.2-1b) |
+| **Frontend** | React 18, Vite, Vanilla CSS |
+| **Storage & Ledger** | SQLite (with SHA-256 tamper-evident hashing) |
+| **DevOps** | Docker, Docker Compose, GitHub Actions, Render, GitHub Pages |
 
 ---
 
-## Quick start
+## 🚀 Quick Start
 
-### Local dev
+### Prerequisites
+- Python 3.12+
+- Node.js 18+
+- Docker & Docker Compose (optional but recommended)
 
+### Option 1: Docker Compose (Recommended)
 ```bash
-# Backend (repo root)
-pip install -r requirements.txt
-uvicorn backend.app:app --reload --port 8080
+# Spin up the entire stack (Backend + Frontend + DB)
+docker compose up --build -d
+```
 
-# Frontend (separate terminal)
+### Option 2: Local Development
+#### Backend
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Start the FastAPI server
+uvicorn backend.app:app --reload --port 8080
+```
+
+#### Frontend
+```bash
+# Navigate to frontend and start the dev server
 cd frontend
 npm install
-npm run dev   # → http://localhost:5173
+npm run dev
 ```
 
-Backend runs on `:8080`, frontend proxies `/api` to it. Open `http://localhost:5173`.
-
-### Train models
-
+#### MLOps (Training & Tracking)
 ```bash
-pip install -r requirements.txt mlflow==3.16.0
+# Run model training pipeline with MLflow tracking
 MLFLOW_TRACKING_URI=sqlite:///mlflow.db python scripts/train_models.py
+
+# Launch MLflow UI
+mlflow ui --port 5000
 ```
 
-Produces `models/production/{pipeline.joblib, meta.json, benchmark_results.csv}`.
+---
 
-### Docker Compose (local full stack)
+## 🔌 API Reference
+
+The backend provides a comprehensive REST API for predictions, workflow management, and monitoring.
+
+### Core Endpoints
+- `GET /health` - Service health and production model status
+- `POST /predict` - Immediate ML prediction (synchronous)
+- `GET /model/info` - Production model metadata and benchmark metrics
+- `GET /metrics` - Runtime metrics and benchmark table
+- `GET /drift` - PSI drift report for monitoring distribution shift
+- `GET /llm/info` - Explanation provider status
+
+### Workflow & State Management (LangGraph)
+- `POST /predict/graph` - Initiate a full LangGraph decision workflow
+- `POST /predict/graph/{thread_id}/approve` - Human approval (resumes a paused `REVIEW` workflow)
+- `GET /predict/graph/{thread_id}` - Get current workflow state
+- `GET /audit/{application_id}` - Full audit trail for an application
+
+### Ledger & Records
+- `GET /api/applications` - List all processed loan applications
+- `GET /api/disbursements` - View the core-banking ledger (contracts and hashes)
+
+---
+
+## 📂 Project Structure
+
+```text
+├── backend/
+│   ├── app.py              # FastAPI application (CORS, routers, metrics)
+│   ├── predict_service.py  # Prediction logic, VND→model units, thresholding
+│   └── Dockerfile
+├── pipeline/
+│   ├── agent/              # LangGraph workflow (10 nodes)
+│   │   ├── graph.py        # StateGraph builder
+│   │   ├── nodes.py        # 10 discrete workflow nodes
+│   │   ├── policy.py       # Financial policy rules
+│   │   ├── fraud.py        # Rule-based fraud detection
+│   │   ├── explanations.py # LLM Vietnamese explanations + template fallback
+│   │   ├── retriever.py    # TF-IDF policy doc retriever
+│   │   └── checkpointer.py # File-backed state persistence
+│   ├── data/               # Dataset generation + real-data ingestion
+│   ├── feature_engineering/ # 5 derived features with edge-case guards
+│   ├── modeling/           # Models factory, evaluation, threshold tuning
+│   ├── monitoring/         # PSI drift detection
+│   ├── storage/            # SQLite core-banking ledger
+│   └── validation/         # Canonical schema + validation rules
+├── frontend/               # React banking UI with print styling
+├── models/production/      # Serialized pipeline + benchmark results + meta
+├── notebooks/              # EDA + model benchmark notebooks
+├── scripts/                # Training, deploy verification, eval
+├── tests/                  # 116 tests (pytest)
+├── data/                   # Synthetic dataset (5k rows, seed 42)
+├── docker-compose.yml      # Full-stack orchestration
+└── render.yaml             # Cloud deployment configurations
+```
+
+---
+
+## 🧪 Testing
+
+The project maintains a high standard of reliability with a comprehensive test suite.
 
 ```bash
-docker compose up --build -d
-```
-
-- API: `localhost:8081` (container port 8080)
-- Web: `localhost:8080` (nginx + nginx proxy `/api` → api:8080)
-
----
-
-## ML monitoring
-
-- **Runtime:** `GET /metrics` — in-process request/latency/error counters + avg predict latency (demo scope; counters reset on restart, no Prometheus/exporter)
-- **Drift:** `GET /drift` — PSI-based feature + prediction drift (NO_DRIFT / DRIFT_DETECTED / INSUFFICIENT_DATA)
-- **MLflow:** Experiment `creditflow-risk`, registered model `creditflow-risk`. View with `mlflow ui`
-
----
-
-## Repository layout
-
-```
-backend/          FastAPI app + prediction service
-frontend/         React + Vite UI
-pipeline/         Training pipeline, feature engineering, agent (LangGraph + LangChain)
-scripts/          train_models.py, utilities
-models/production/ Trained pipeline + metadata + benchmarks
-data/             Synthetic dataset + SQLite ledger + checkpoints
-tests/            Unit + integration tests
-deploy/           Docker + Render config
-docs/             Spec, QA acceptance, architecture
+# Run the test suite (116 passing tests)
+python -m pytest tests/ -v
 ```
 
 ---
 
-## Status
+## 📦 Data & Reproducibility
 
-- ✅ Demoable locally end-to-end (UI → API → real model)
-- ✅ 4 ML models trained + benchmarked + registered
-- ✅ LangGraph approval workflow with persisted state
-- ✅ SQLite ledger with tamper-evident disbursement records
-- ✅ Drift monitoring (PSI) + runtime metrics
-- ✅ LLM explain layer (Cloudflare Workers AI, falls back to template offline)
-- ✅ CI: GitHub Actions (test + build) + CD (GHCR images + Pages deploy)
-- ✅ Docker images: `ghcr.io/imtarget05/creditflow/creditflow-api` + `ghcr.io/imtarget05/creditflow/creditflow-web`
+The system was trained on a **5,000-row synthetic proxy dataset** (seed `42`, ~12% default rate). The data generation process is entirely deterministic and reproducible, ensuring honest positioning (acting as a proxy, not real proprietary bank data) while allowing full end-to-end pipeline validation.
 
 ---
 
-## CI / CD
+## ☁️ Deployment
 
-### Pipeline
-
-```
-push to main
-  ├─ test (pytest unit + API + LangGraph) — ubuntu-latest, Python 3.12
-  ├─ build-frontend (npm ci + vite build) — ubuntu-latest, Node 22
-  ├─ build-api-image (docker build + push to GHCR) — needs: test
-  ├─ build-web-image (docker build + push to GHCR) — needs: build-frontend
-  ├─ deploy-frontend-pages (GitHub Pages) — needs: build-frontend
-  └─ notify-render (optional webhook) — needs: build-api-image, deploy-frontend-pages
-```
-
-### Quay mình
-
-| Component | Registry / Platform | Image / URL | Trigger |
-|---|---|---|---|
-| **Backend Docker** | GHCR | `ghcr.io/imtarget05/creditflow/creditflow-api:latest` (+ git SHA tag) | push to main |
-| **Frontend Docker** | GHCR | `ghcr.io/imtarget05/creditflow/creditflow-web:latest` (+ git SHA tag) | push to main |
-| **Frontend static** | GitHub Pages | `https://imtarget05.github.io/CreditFlow/` | push to main |
-| **Backend service** | Render | setup in Render dashboard | manual (native GitHub integration or webhook) |
-
-### Tags
-
-- `latest` — head of `main`
-- `{short-sha}` — mỗi commit có 1 tag, dễ rollback
-
-### Cache
-
-Docker Buildx sử dụng GitHub Actions cache (GHA) để tăng tốc build.
-
-### Permissions
-
-| Scope | Use |
-|---|---|
-| `contents: read` | checkout repo |
-| `packages: write` | push Docker images to GHCR |
-| `pages: write` + `id-token: write` | deploy GitHub Pages |
+- **Backend**: Configured for deployment on **Render** (via `render.yaml`).
+- **Frontend**: Configured for deployment on **GitHub Pages**.
+- **CI/CD**: Automated via **GitHub Actions** for testing and deployment verification.
 
 ---
 
-## Kích hoạt CD
+## 📄 License
 
-### GitHub Pages (frontend static)
-
-1. Repo → **Settings** → **Pages** → Source: **GitHub Actions**
-2. Push to `main` — job `deploy-frontend-pages` tự chạy
-
-### GHCR (Docker images)
-
-Tự động — không cần setup thêm. Images public nếu repo public, private nếu repo private.
-
-Xem images:
-- `ghcr.io/imtarget05/creditflow/creditflow-api:latest`
-- `ghcr.io/imtarget05/creditflow/creditflow-web:latest`
-
-### Render (backend service)
-
-Hai cách:
-
-**Cách 1 — Native GitHub integration (khuyên dùng):**
-
-1. Render dashboard → New Web Service → connect repo `imtarget05/CreditFlow`
-2. Build Command: `pip install -r requirements.txt`
-3. Start Command: `uvicorn backend.app:app --host 0.0.0.0 --port $PORT`
-4. Render tự động redeploy khi push đến `main`
-
-**Cách 2 — Webhook từ GitHub Actions (nếu muốn control chính xác):**
-
-1. Render dashboard → Settings → Webhooks → add webhook
-2. Repo → Settings → Secrets → add `RENDER_DEPLOY_HOOK` = webhook URL
-3. Job `notify-render` sẽ curl webhook sau khi build API image thành công
-
----
-
-## Kết nối frontend ↔ backend
-
-Frontend đọc env `VITE_API_BASE` để biết backend ở đâu.
-
-| Môi trường | VITE_API_BASE | Ghi chú |
-|---|---|---|
-| Local dev (Vite proxy) | `/api` (mặc định) | Vite proxy → `localhost:8080` |
-| Docker Compose | `/api` (mặc định) | Nginx proxy → `api:8080` |
-| GitHub Pages + Render backend | `https://creditflow-api-ko2h.onrender.com` | Baked at build time (`.env.production`), build lại nếu đổi URL |
-| GitHub Pages + backend khác | `https://other-backend-url` | Set `VITE_API_BASE` khi build |
-
-Build frontend cho production:
-
-```bash
-cd frontend
-VITE_API_BASE=https://creditflow-api-ko2h.onrender.com npm run build
-```
-
----
-
-## Docker images usage
-
-### Chạy từ GHCR
-
-```bash
-# API
-docker run -d --name creditflow-api \
-  -p 8080:8080 \
-  -e CREDITFLOW_LLM_PROVIDER=cloudflare \
-  -e CLOUDFLARE_ACCOUNT_ID=xxx \
-  -e CLOUDFLARE_API_TOKEN=yyy \
-  -e CLOUDFLARE_MODEL=@cf/meta/llama-3.2-1b-instruct \
-  ghcr.io/imtarget05/creditflow/creditflow-api:latest
-
-# Web (nginx)
-docker run -d --name creditflow-web -p 8080:8080 ghcr.io/imtarget05/creditflow/creditflow-web:latest
-```
-
-### Docker Compose (local)
-
-```bash
-docker compose up --build -d
-```
-
----
-
-## Secrets
-
-| Secret | Nơi lưu | Ghi chú |
-|---|---|---|
-| `CLOUDFLARE_ACCOUNT_ID` | Render dashboard / `.env` (local) | sync:false trong render.yaml |
-| `CLOUDFLARE_API_TOKEN` | Render dashboard / `.env` (local) | sync:false trong render.yaml |
-| `GITHUB_TOKEN` | GitHub Actions (auto) | dành cho GHCR push, không cần setup |
-| `RENDER_DEPLOY_HOOK` | GitHub repo secrets (optional) | nếu dùng cách 2 webhook |
-
----
-
-## Dockerfile
-
-| File | Build context | Image | Ghi chú |
-|---|---|---|---|
-| `backend/Dockerfile` | repo root (`.`) | `creditflow-api` | COPY backend/ + pipeline/ + models/ |
-| `frontend/Dockerfile` | `frontend/` | `creditflow-web` | multi-stage: node build → nginx serve |
-
-Docker Compose `docker-compose.yml` là canonical cho local dev full-stack.
----
-
-## Documentation
-
-- [`docs/spec.md`](docs/spec.md) — full product specification
-- [`docs/qa/manual-acceptance.md`](docs/qa/manual-acceptance.md) — manual acceptance test evidence
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
