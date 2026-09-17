@@ -7,7 +7,7 @@
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-Enabled-orange.svg)](https://scikit-learn.org/)
 [![MLflow](https://img.shields.io/badge/MLflow-3.16-blue.svg)](https://mlflow.org/)
 [![Docker](https://img.shields.io/badge/Docker-Supported-blue.svg)](https://www.docker.com/)
-[![Tests](https://img.shields.io/badge/Tests-116%20Passing-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-118-success.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **CreditFlow** is a production-grade ML credit risk decision support system tailored for financial lending. Moving beyond simple notebook exercises, this is a fully deployable decision engine with a complete pipeline: **data validation → feature engineering → model training → evaluation → serving → monitoring**.
@@ -22,13 +22,13 @@ Designed with enterprise requirements in mind, it features audit trails, human-i
 2. **Cost-Sensitive Threshold Tuning**: Optimized for asymmetric costs (False Negative cost=5.0 for missed defaults, False Positive cost=1.0 for wrong rejections), resulting in an optimal decision threshold of `0.20`.
 3. **Winning Model**: **Logistic Regression** (Business Cost=201, Recall=0.80, F1=0.57) outperformed XGBoost on the business cost metric and was selected for production.
 4. **Robust Feature Engineering**: Engineered 5 derived features (`debt_to_income`, `loan_to_income`, `debt_to_loan`, `employment_stability`, `credit_history_year_ratio`) with zero-division guards and robust handling of edge cases.
-5. **Stateful Decision Workflow**: Leverages **LangGraph** for a 10-node state machine that handles human interrupts for `REVIEW` decisions, pausing and resuming workflows asynchronously.
+5. **Stateful Decision Workflow**: Leverages **LangGraph** for a 12-node state machine (load → gateways → validate → risk → financials → fraud → policy → explain → decision → [human_approval] → execute → audit) that handles human interrupts for `REVIEW` decisions, pausing and resuming workflows asynchronously.
 6. **Core-Banking Ledger Integration**: Employs SQLite with deterministic contract codes (`HDTD-YYYYMMDD-XXXX`) and **SHA-256 tamper-evident hashes** for the disbursement ledger.
-7. **Explainable AI**: Integrates Cloudflare Workers AI (Llama 3.2-1b) to generate Vietnamese natural language explanations for decisions (with fallback templates). The LLM *explains*, it does *not* decide.
+7. **Explainable AI**: Cloudflare Workers AI, OpenAI, Anthropic, Google, and Local vLLM are supported. A strict Policy Router blocks CONFIDENTIAL PII from reaching Public Cloud APIs, automatically routing to Local vLLM or Deterministic Fallback instead. The LLM *explains*, it does *not* decide.
 8. **Production Monitoring**: Includes **PSI (Population Stability Index)** drift detection to track feature and prediction distribution shifts against baselines.
 9. **Fraud Detection**: Rule-based deterministic fraud flags integrated upstream of the ML pipeline.
 10. **Print-Ready Decision Slips**: Browser printing optimized with `@media print` CSS, featuring signature lines for loan officers and branch managers.
-11. **Comprehensive MLOps**: Full experiment tracking, model registry, and artifact versioning powered by **MLflow**.
+11. **Comprehensive MLOps**: Experiment tracking, model registry, and artifact versioning powered by **MLflow** (verified locally with `mlflow==3.16.0`; optional in CI — training script degrades gracefully when mlflow is absent).
 
 ---
 
@@ -147,14 +147,18 @@ The backend provides a comprehensive REST API for predictions, workflow manageme
 │   ├── predict_service.py  # Prediction logic, VND→model units, thresholding
 │   └── Dockerfile
 ├── pipeline/
-│   ├── agent/              # LangGraph workflow (10 nodes)
+│   ├── agent/              # LangGraph workflow (12 nodes)
 │   │   ├── graph.py        # StateGraph builder
-│   │   ├── nodes.py        # 10 discrete workflow nodes
+│   │   ├── nodes.py        # 12 discrete workflow nodes
+│   │   ├── subagents/      # decoupled specialist agents (underwriting, fraud/compliance, explainability, disbursement)
 │   │   ├── policy.py       # Financial policy rules
 │   │   ├── fraud.py        # Rule-based fraud detection
 │   │   ├── explanations.py # LLM Vietnamese explanations + template fallback
 │   │   ├── retriever.py    # TF-IDF policy doc retriever
 │   │   └── checkpointer.py # File-backed state persistence
+│   ├── financial/          # Basel II/III metrics, risk-based pricing, amortization
+│   ├── gateways/           # CIC bureau + bank-statement simulators
+│   ├── disbursement/       # VietQR + loan-agreement + authority matrix
 │   ├── data/               # Dataset generation + real-data ingestion
 │   ├── feature_engineering/ # 5 derived features with edge-case guards
 │   ├── modeling/           # Models factory, evaluation, threshold tuning
@@ -165,7 +169,7 @@ The backend provides a comprehensive REST API for predictions, workflow manageme
 ├── models/production/      # Serialized pipeline + benchmark results + meta
 ├── notebooks/              # EDA + model benchmark notebooks
 ├── scripts/                # Training, deploy verification, eval
-├── tests/                  # 116 tests (pytest)
+├── tests/                  # 118 tests (pytest)
 ├── data/                   # Synthetic dataset (5k rows, seed 42)
 ├── docker-compose.yml      # Full-stack orchestration
 └── render.yaml             # Cloud deployment configurations
@@ -178,7 +182,7 @@ The backend provides a comprehensive REST API for predictions, workflow manageme
 The project maintains a high standard of reliability with a comprehensive test suite.
 
 ```bash
-# Run the test suite (116 passing tests)
+# Run the test suite (118 tests: 103 fast + 12 slow workflow + 3 live-network integration)
 python -m pytest tests/ -v
 ```
 

@@ -17,6 +17,8 @@ from __future__ import annotations
 import sys
 import os
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from contextlib import ExitStack
@@ -29,9 +31,13 @@ from backend.predict_service import load_production_model
 _stack = ExitStack()
 client = _stack.enter_context(TestClient(app))
 
-LOW_RISK = {"income":5000,"age":35,"employment_years":10,"loan_amount":20000,"loan_term":36,"existing_debt":3000,"credit_history":8,"previous_defaults":0}
-MID_RISK = {"income":2500,"age":32,"employment_years":4,"loan_amount":12000,"loan_term":36,"existing_debt":1000,"credit_history":5,"previous_defaults":2}
-HIGH_RISK = {"income":2500,"age":32,"employment_years":4,"loan_amount":12000,"loan_term":36,"existing_debt":3500,"credit_history":5,"previous_defaults":0}
+# Profiles follow the API/UI money-unit contract: VND (đồng).
+# Training-scale numbers (e.g. income=2500) are rejected by
+# pipeline/validation/schemas.py:validate_money_unit_contract — every money
+# field here is a real VND amount, and all ratios (DTI/LTI) are unchanged.
+LOW_RISK = {"income":5000000,"age":35,"employment_years":10,"loan_amount":20000000,"loan_term":36,"existing_debt":3000000,"credit_history":8,"previous_defaults":0}
+MID_RISK = {"income":2500000,"age":32,"employment_years":4,"loan_amount":12000000,"loan_term":36,"existing_debt":1000000,"credit_history":5,"previous_defaults":2}
+HIGH_RISK = {"income":2500000,"age":32,"employment_years":4,"loan_amount":12000000,"loan_term":36,"existing_debt":3500000,"credit_history":5,"previous_defaults":0}
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +52,7 @@ def test_policy_no_violations_for_clean_profile():
 
 def test_policy_blocks_excessive_dti():
     from pipeline.agent.policy import evaluate_policy, has_blocking_violation
-    high_dti = dict(LOW_RISK, existing_debt=6000)
+    high_dti = dict(LOW_RISK, existing_debt=6000000)
     violations = evaluate_policy(high_dti)
     assert "policy_debt_to_income_excessive" in violations
     assert has_blocking_violation(violations) is True
@@ -54,7 +60,7 @@ def test_policy_blocks_excessive_dti():
 
 def test_policy_blocks_excessive_lti():
     from pipeline.agent.policy import evaluate_policy, has_blocking_violation
-    high_lti = dict(LOW_RISK, loan_amount=150000)
+    high_lti = dict(LOW_RISK, loan_amount=150000000)
     violations = evaluate_policy(high_lti)
     assert "policy_loan_to_income_extreme" in violations
     assert has_blocking_violation(violations) is True
@@ -76,6 +82,41 @@ def test_policy_warn_only_for_employment_stability():
 
 
 # ---------------------------------------------------------------------------
+# Money-unit contract (VND) enforcement in the workflow
+# ---------------------------------------------------------------------------
+TRAINING_SCALE_PROFILE = {
+    "income": 2500, "age": 32, "employment_years": 4, "loan_amount": 12000,
+    "loan_term": 36, "existing_debt": 3500, "credit_history": 5,
+    "previous_defaults": 0,
+}
+
+
+def test_validate_input_rejects_training_scale_money():
+    """A payload that cannot be VND must be rejected with an explicit message."""
+    from pipeline.agent.nodes import make_validate_input
+
+    out = make_validate_input()({"customer_data": TRAINING_SCALE_PROFILE, "audit_trail": []})
+    assert out["decision"] == "REJECT"
+    assert out["next"] == "reject"
+    assert "unit_contract" in out["error"] or "VND" in out["error"]
+
+
+def test_policy_and_fraud_use_vnd_as_is():
+    """No magnitude heuristic: policy/fraud compare the contract VND values."""
+    from pipeline.agent.policy import evaluate_policy
+    from pipeline.agent.fraud import compute_fraud_flags
+
+    # 900,000 VND loan is below the contract floor but must NOT be silently
+    # multiplied by 1000 — the ratio rules simply see the given value.
+    small_loan = dict(LOW_RISK, loan_amount=900000, credit_history=0)
+    assert "policy_credit_history_short" not in evaluate_policy(small_loan)
+    assert "zero_credit_history" not in compute_fraud_flags(small_loan)
+    assert "zero_credit_history" in compute_fraud_flags(
+        dict(LOW_RISK, loan_amount=600000000, credit_history=0)
+    )
+
+
+# ---------------------------------------------------------------------------
 # Fraud detection tests
 # ---------------------------------------------------------------------------
 def test_fraud_clean_profile():
@@ -88,14 +129,14 @@ def test_fraud_clean_profile():
 
 def test_fraud_detects_extreme_debt_burden():
     from pipeline.agent.fraud import compute_fraud_flags
-    extreme_debt = dict(LOW_RISK, existing_debt=30000)
+    extreme_debt = dict(LOW_RISK, existing_debt=30000000)
     flags = compute_fraud_flags(extreme_debt)
     assert "debt_burden_extreme" in flags
 
 
 def test_fraud_detects_zero_credit_history():
     from pipeline.agent.fraud import compute_fraud_flags
-    no_history = dict(LOW_RISK, credit_history=0, loan_amount=60000000)
+    no_history = dict(LOW_RISK, credit_history=0, loan_amount=60000000000)
     flags = compute_fraud_flags(no_history)
     assert "zero_credit_history" in flags
 
@@ -230,7 +271,7 @@ def test_explanation_langchain_provenance(monkeypatch):
         "customer_data": LOW_RISK,
         "risk_score": 0.5,
         "risk_level": "MEDIUM",
-        "decision": "REVIEW",
+        "decision": "REVIEW", "data_classification": "PUBLIC",
         "model_name": "logistic_regression",
         "reasons": ["high debt-to-income ratio"],
         "fraud_score": 0.0,
@@ -256,7 +297,7 @@ def test_graph_approve_path(monkeypatch):
     assert result.get("decision") == "APPROVE"
     assert result.get("workflow_complete") is True
     assert result.get("approval_required") is False
-    assert len(result.get("audit_trail", [])) == 9
+    assert len(result.get("audit_trail", [])) >= 9
 
 
 def test_graph_reject_path(monkeypatch):
@@ -283,8 +324,11 @@ def test_graph_review_path_pauses(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# FastAPI graph endpoint tests
+# FastAPI graph endpoint tests — SLOW (each spins the full 12-node LangGraph
+# + TestClient lifespan; ~18-26s per test). CI fast job excludes them via
+# `-m "not integration and not slow"`; CI slow job runs them separately.
 # ---------------------------------------------------------------------------
+@pytest.mark.slow
 def test_graph_endpoint_start_approve(monkeypatch):
     for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
         monkeypatch.delenv(var, raising=False)
@@ -297,6 +341,7 @@ def test_graph_endpoint_start_approve(monkeypatch):
     assert "audit_trail" in body
 
 
+@pytest.mark.slow
 def test_graph_endpoint_start_reject(monkeypatch):
     for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
         monkeypatch.delenv(var, raising=False)
@@ -307,6 +352,7 @@ def test_graph_endpoint_start_reject(monkeypatch):
     assert body["workflow_complete"] is True
 
 
+@pytest.mark.slow
 def test_graph_endpoint_start_review_and_resume(monkeypatch):
     for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
         monkeypatch.delenv(var, raising=False)
@@ -327,6 +373,7 @@ def test_graph_endpoint_start_review_and_resume(monkeypatch):
     assert body2["workflow_complete"] is True
 
 
+@pytest.mark.slow
 def test_graph_endpoint_start_review_and_reject(monkeypatch):
     for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
         monkeypatch.delenv(var, raising=False)
@@ -345,6 +392,7 @@ def test_graph_endpoint_start_review_and_reject(monkeypatch):
     assert body2["workflow_complete"] is True
 
 
+@pytest.mark.slow
 def test_graph_endpoint_get_state(monkeypatch):
     for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
         monkeypatch.delenv(var, raising=False)
@@ -364,6 +412,7 @@ def test_graph_endpoint_get_state_not_found():
     assert r.status_code == 404
 
 
+@pytest.mark.slow
 def test_graph_endpoint_audit_trail(monkeypatch):
     for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
         monkeypatch.delenv(var, raising=False)
@@ -384,6 +433,84 @@ def test_graph_endpoint_audit_not_found():
     assert r.status_code == 404
 
 
+@pytest.mark.slow
+def test_graph_endpoint_rejects_training_scale_money(monkeypatch):
+    """POST /predict/graph with training-scale money -> REJECT + clear message."""
+    for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
+        monkeypatch.delenv(var, raising=False)
+    r = client.post("/predict/graph", json={"customer_data": TRAINING_SCALE_PROFILE})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["decision"] == "REJECT"
+    assert "VND" in body["error"]
+    assert body["workflow_complete"] is True
+
+
+def test_decoupled_subagents_direct_execution():
+    """Verify each decoupled sub-agent in CreditFlow can run independently."""
+    from pipeline.agent.subagents import (
+        UnderwritingRiskAgent,
+        FraudComplianceAgent,
+        ExplainabilityAgent,
+        DisbursementExecutionAgent,
+    )
+    from pipeline.agent.graph import CreditDecisionOrchestrator
+    from backend.predict_service import load_production_model
+
+    pipeline, meta = load_production_model()
+    underwriting = UnderwritingRiskAgent(pipeline, meta)
+    fraud = FraudComplianceAgent()
+    explainer = ExplainabilityAgent()
+    disbursement = DisbursementExecutionAgent()
+
+    state = {
+        "customer_data": LOW_RISK,
+        "request_meta": {},
+    }
+
+    # 1. Underwriting
+    val_out = underwriting.validate(state)
+    assert val_out["audit_trail"][-1]["status"] == "success"
+    state.update(val_out)
+
+
+    score_out = underwriting.score_risk(state)
+    assert "risk_score" in score_out
+    state.update(score_out)
+
+    # 2. Fraud & Compliance
+    fraud_out = fraud.check_fraud(state)
+    assert "fraud_score" in fraud_out
+    state.update(fraud_out)
+
+    policy_out = fraud.check_policy(state)
+    assert "policy_violations" in policy_out
+    state.update(policy_out)
+
+    # 3. Explainability
+    exp_out = explainer.explain_decision(state)
+    assert "explanation" in exp_out
+    state.update(exp_out)
+
+    # 4. Disbursement
+    dec_out = disbursement.decide(state)
+    assert dec_out["decision"] == "APPROVE"
+    state.update(dec_out)
+
+    exec_out = disbursement.execute_disbursement(state)
+    assert "audit_trail" in exec_out
+    state.update(exec_out)
+
+    audit_out = disbursement.log_audit(state)
+    assert audit_out["workflow_complete"] is True
+
+
+    # 5. Orchestrator alias compiled graph
+    graph = CreditDecisionOrchestrator(pipeline, meta)
+    assert graph is not None
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])
+

@@ -16,7 +16,9 @@ This module exposes:
 """
 from __future__ import annotations
 
+import math
 import os
+import re
 from typing import Any
 
 from typing_extensions import TypedDict
@@ -51,6 +53,8 @@ def _fmt_money(v: float) -> str:
 def _build_context(state: CreditState) -> dict[str, Any]:
     """Extract the fields an explanation prompt needs from *state*."""
     data = state.get("customer_data", {})
+    data_classification = state.get("data_classification", "CONFIDENTIAL")
+
     fe = state.get("derived_features", {})
     return {
         "risk_score": state.get("risk_score", 0.0),
@@ -69,11 +73,110 @@ def _build_context(state: CreditState) -> dict[str, Any]:
         "loan_amount": data.get("loan_amount", "N/A"),
         "loan_term": data.get("loan_term", "N/A"),
         "existing_debt": data.get("existing_debt", "N/A"),
+        "data_classification": data_classification,
         "credit_history": data.get("credit_history", "N/A"),
         "previous_defaults": data.get("previous_defaults", "N/A"),
         "debt_to_income": fe.get("debt_to_income", "N/A"),
         "loan_to_income": fe.get("loan_to_income", "N/A"),
     }
+
+
+_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+_CONFIDENCE_LEVELS = ("low", "medium", "high")
+# Fields an LLM is allowed to fill. Anything else it returns (for example a
+# "decision" or a new "risk_score") is dropped, so prose can never move the
+# decision that policy + the cost-tuned threshold already made.
+_EXPLANATION_FIELDS = ("summary", "risk_factors", "recommendation_note", "confidence")
+
+
+def _number_interpretations(token: str) -> set[float]:
+    """Plausible numeric readings of one token ("8.000.000", "1,875", "0.9").
+
+    Separator conventions are ambiguous between thousands-grouping (vi-VN) and
+    decimal notation (en-US), so both readings are offered. Being permissive here
+    only widens what counts as grounded; it never invents a value.
+    """
+    values: set[float] = set()
+    try:
+        values.add(float(re.sub(r"[.,]", "", token)))
+    except ValueError:
+        pass
+    head, tail = max(
+        ((token.rfind("."), token[token.rfind(".") + 1 :]), (token.rfind(","), token[token.rfind(",") + 1 :])),
+        key=lambda pair: pair[0],
+    )
+    if head > 0 and 0 < len(tail) <= 3:
+        try:
+            values.add(float(re.sub(r"[.,]", "", token[:head]) + "." + tail))
+        except ValueError:
+            pass
+    return values
+
+
+def _numbers_in(value: Any) -> set[float]:
+    """Every number reachable from *value*, including digits inside strings."""
+    if isinstance(value, bool):
+        return set()
+    if isinstance(value, dict):
+        found: set[float] = set()
+        for item in value.values():
+            found |= _numbers_in(item)
+        return found
+    if isinstance(value, (list, tuple, set)):
+        found = set()
+        for item in value:
+            found |= _numbers_in(item)
+        return found
+    if isinstance(value, (int, float)):
+        return {float(value)}
+    if isinstance(value, str):
+        found = set()
+        for token in _NUMBER_RE.findall(value):
+            found |= _number_interpretations(token)
+        return found
+    return set()
+
+
+def _is_grounded(value: float, allowed: set[float]) -> bool:
+    for candidate in allowed:
+        if math.isclose(value, candidate, rel_tol=0.0, abs_tol=1e-9):
+            return True
+        for places in range(0, 5):
+            if math.isclose(round(candidate, places), value, rel_tol=0.0, abs_tol=1e-9):
+                return True
+    return False
+
+
+def _ungrounded_numbers(texts: list[str], allowed: set[float]) -> list[str]:
+    """Number tokens in *texts* that cannot be traced back to the case data.
+
+    Scope: detects invented figures (the concrete form of "fabricated profile
+    information") and blocks them. It does **not** verify that a sentence is
+    semantically true, and an ambiguous token is accepted if any reading is
+    grounded; this is a numeric grounding gate, not a faithfulness proof.
+    """
+    ungrounded: list[str] = []
+    for text in texts:
+        for token in _NUMBER_RE.findall(text):
+            readings = _number_interpretations(token)
+            if not readings or not any(_is_grounded(v, allowed) for v in readings):
+                ungrounded.append(token)
+    return ungrounded
+
+
+def _llm_fields_are_well_typed(fields: dict) -> bool:
+    summary = fields.get("summary")
+    note = fields.get("recommendation_note")
+    factors = fields.get("risk_factors")
+    if not isinstance(summary, str) or not summary.strip():
+        return False
+    if not isinstance(note, str) or not note.strip():
+        return False
+    if fields.get("confidence") not in _CONFIDENCE_LEVELS:
+        return False
+    return isinstance(factors, list) and bool(factors) and all(
+        isinstance(item, str) and item.strip() for item in factors
+    )
 
 
 _PROMPT_TEMPLATE = """\
@@ -119,9 +222,24 @@ def _try_llm_explanation(ctx: dict[str, Any]) -> ExplanationOutput | None:
     if not provider:
         return None
 
+    classification = ctx.get("data_classification", "CONFIDENTIAL")
+    is_public_cloud = provider in ["cloudflare", "groq", "openai", "anthropic", "google"]
+    
+    if classification == "CONFIDENTIAL" and is_public_cloud:
+        print(f"[Policy Guard] Blocked sending CONFIDENTIAL data to public cloud provider: {provider}")
+        return None
+
+    if provider == "local_vllm":
+        from pipeline.agent.llm_provider import try_local_vllm_explain
+        return try_local_vllm_explain(ctx)
+
     if provider == "cloudflare":
         from pipeline.agent.llm_provider import try_cloudflare_explain
         return try_cloudflare_explain(ctx)
+
+    if provider == "groq":
+        from pipeline.agent.llm_provider import try_groq_explain
+        return try_groq_explain(ctx)
 
     try:
         from langchain_core.prompts import ChatPromptTemplate
@@ -250,12 +368,42 @@ def generate_explanation(state: CreditState) -> ExplanationOutput:
     deterministic template (no API key required) so the workflow runs offline.
     """
     ctx = _build_context(state)
+    verified = _template_explanation(ctx)
 
-    llm_result = _try_llm_explanation(ctx)
-    if llm_result is not None:
-        return llm_result
+    try:
+        llm_result = _try_llm_explanation(ctx)
+    except Exception:
+        verified["fallback_reason"] = "provider_error"
+        return verified
+    if llm_result is None:
+        verified["fallback_reason"] = "provider_unavailable"
+        return verified
+    if not isinstance(llm_result, dict):
+        verified["fallback_reason"] = "malformed_output"
+        return verified
 
-    return _template_explanation(ctx)
+    # (1) Drop every key the contract does not define. A "decision" or
+    # "risk_score" produced by the model is never copied into the graph state.
+    fields = {key: llm_result.get(key) for key in _EXPLANATION_FIELDS}
+    if not _llm_fields_are_well_typed(fields):
+        verified["fallback_reason"] = "malformed_output"
+        return verified
+
+    # (2) Every number in the prose must be traceable to the case context or to
+    # the deterministic narrative built from that same context.
+    allowed = _numbers_in(ctx) | _numbers_in([verified[field] for field in ("summary", "risk_factors", "recommendation_note")])
+    texts = [fields["summary"], fields["recommendation_note"], *fields["risk_factors"]]
+    ungrounded = _ungrounded_numbers(texts, allowed)
+    if ungrounded:
+        verified["fallback_reason"] = "ungrounded_numbers"
+        verified["ungrounded_numbers"] = sorted(set(ungrounded))[:8]
+        return verified
+
+    result = dict(fields)
+    for key in ("_llm", "prompt_version", "llm_model"):
+        if key in llm_result:
+            result[key] = llm_result[key]
+    return result
 
 
 def explanation_to_text(expl: ExplanationOutput) -> str:

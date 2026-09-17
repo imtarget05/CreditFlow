@@ -51,12 +51,25 @@ class CreditState(TypedDict, total=False):
     audit_id: str
 
     # --- raw input ---
+    data_classification: str     # CONFIDENTIAL, INTERNAL, PUBLIC
+
     customer_data: dict          # canonical 8-feature payload
     request_meta: dict           # source IP, timestamp, caller, etc.
+
+    # --- Enterprise / Core Banking Raw Data ---
+    national_id: str
+    collateral_type: str
+    collateral_value: float
+    loan_amount: float
+    loan_tenure_months: int
 
     # --- derived data ---
     derived_features: dict
     feature_flags: list[str]
+
+    # --- Gateway Responses ---
+    cic_report: dict             # cic_gateway response
+    bank_statement: dict         # statement_parser response
 
     # --- ML risk signal ---
     model_name: str
@@ -71,6 +84,11 @@ class CreditState(TypedDict, total=False):
     # --- policy signal ---
     policy_violations: list[str]
 
+    # --- Financial / Basel Engineering ---
+    basel_metrics: dict          # lgd, ead, rwa, capital_requirement
+    pricing: dict                # risk_based_pricing, max_credit_limit
+    amortization_schedule: list[dict] # month-by-month repayment plan
+
     # --- decision ---
     decision: str                # APPROVE / REVIEW / REJECT
     reasons: list[str]           # rule-based risk reasons
@@ -79,14 +97,19 @@ class CreditState(TypedDict, total=False):
     tuned_threshold: float
     business_cost: dict          # {fn_cost, fp_cost}
 
-    # --- human approval ---
+    # --- human approval & authority matrix ---
     approval_required: bool      # True when decision == REVIEW
     approval_status: str         # PENDING / APPROVED / REJECTED
     approval_note: str
+    authority_level: str         # STP, UNDERWRITER, RISK_COMMITTEE
 
     # --- LLM explanation (LangChain layer, never the decision-maker) ---
     explanation: str
     explanation_meta: dict
+    
+    # --- Disbursement / Execution ---
+    vietqr_url: str
+    loan_agreement_pdf: str
 
     # --- workflow control ---
     next: str                    # target node for conditional routing
