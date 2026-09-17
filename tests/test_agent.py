@@ -177,6 +177,7 @@ def test_explanation_deterministic_fallback(monkeypatch):
         "fraud_score": 0.0,
         "fraud_flags": [],
         "policy_violations": [],
+        "data_classification": "PUBLIC",
     }
     expl = generate_explanation(state)
     assert "summary" in expl
@@ -240,6 +241,7 @@ def test_explain_node_wires_rag(monkeypatch):
         "fraud_score": 0.0,
         "fraud_flags": [],
         "policy_violations": [],
+        "data_classification": "PUBLIC",
         "audit_trail": [],
     }
     result = explain(state)
@@ -277,6 +279,7 @@ def test_explanation_langchain_provenance(monkeypatch):
         "fraud_score": 0.0,
         "fraud_flags": [],
         "policy_violations": [],
+        "data_classification": "PUBLIC",
     }
     expl = generate_explanation(state)
     assert expl.get("_llm") is True
