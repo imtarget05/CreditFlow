@@ -39,6 +39,8 @@ from pipeline.storage.ledger import (
     record_disbursement,
     update_application_status,
     get_application_by_thread,
+    find_idempotent_approval,
+    record_idempotent_approval,
     list_applications,
     list_disbursements,
     STATUS_APPROVED,
@@ -351,6 +353,7 @@ class GraphApprovalRequest(BaseModel):
     """Request body to resume a paused workflow with human approval."""
     action: str = Field(..., description="'approve' or 'reject'")
     note: str = ""
+    idempotency_key: str = Field(default="", description="Client-supplied idempotency key for approval replay")
 
 
 def _get_graph(thread_id: str):
@@ -446,6 +449,16 @@ def approve_graph_workflow(thread_id: str, req: GraphApprovalRequest):
     graph = _get_graph(thread_id)
     run_config = {"configurable": {"thread_id": thread_id}}
 
+    # Idempotency gate (Plan 03): a replayed key returns the stored approval
+    # without resuming the graph or disbursing twice.
+    idem_key = (req.idempotency_key or "").strip()
+    if idem_key:
+        replayed = find_idempotent_approval(thread_id, idem_key)
+        if replayed is not None:
+            replayed = dict(replayed)
+            replayed["replay"] = True
+            return replayed
+
     try:
         result = graph.invoke(Command(resume=req.action), config=run_config)
     except Exception:
@@ -490,7 +503,7 @@ def approve_graph_workflow(thread_id: str, req: GraphApprovalRequest):
             metrics.error()
             disbursement = None
 
-    return {
+    response = {
         "thread_id": thread_id,
         "application_id": result.get("application_id", ""),
         "decision": result.get("decision", "UNKNOWN"),
@@ -503,6 +516,14 @@ def approve_graph_workflow(thread_id: str, req: GraphApprovalRequest):
         "ledger_status": new_status,
         "disbursement": disbursement,
     }
+    # Terminal outcome: persist idempotent record + outbox so a replay
+    # returns exactly this response without a second disbursement.
+    if idem_key:
+        try:
+            record_idempotent_approval(thread_id, idem_key, response)
+        except Exception:
+            metrics.error()
+    return response
 
 
 @app.get("/predict/graph/{thread_id}")

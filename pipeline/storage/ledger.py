@@ -114,6 +114,26 @@ def init_db(db_path: Path | None = None) -> None:
                 ON loan_applications(status);
             CREATE INDEX IF NOT EXISTS idx_disbursements_application
                 ON disbursements(application_id);
+
+            CREATE TABLE IF NOT EXISTS idempotency_keys (
+                caller_scope TEXT NOT NULL,
+                idem_key     TEXT NOT NULL,
+                fingerprint  TEXT NOT NULL DEFAULT '',
+                status       TEXT NOT NULL DEFAULT 'pending',
+                response     TEXT NOT NULL DEFAULT '',
+                expires_at   TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (caller_scope, idem_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS outbox_events (
+                event_id      TEXT PRIMARY KEY,
+                destination   TEXT NOT NULL DEFAULT '',
+                payload       TEXT NOT NULL DEFAULT '',
+                version       TEXT NOT NULL DEFAULT 'v1',
+                attempts      INTEGER NOT NULL DEFAULT 0,
+                next_retry_at TEXT NOT NULL DEFAULT '',
+                delivered_at  TEXT NOT NULL DEFAULT ''
+            );
             """
         )
 
@@ -192,6 +212,58 @@ def init_db_pg() -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def find_idempotent_approval(
+    thread_id: str, idempotency_key: str, db_path: Path | None = None
+) -> dict | None:
+    """Return the stored approval response for a replayed (thread, key).
+
+    Empty keys never match. Uses the shared idempotency_keys table with
+    caller_scope 'approval:<thread_id>' so a key can never approve a
+    different thread.
+    """
+    if not (idempotency_key or "").strip():
+        return None
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT response FROM idempotency_keys "
+            "WHERE caller_scope = ? AND idem_key = ? AND status = 'completed'",
+            (f"approval:{thread_id}", idempotency_key.strip()),
+        ).fetchone()
+    if row is None:
+        return None
+    return json.loads(row["response"])
+
+
+def record_idempotent_approval(
+    thread_id: str,
+    idempotency_key: str,
+    response: dict,
+    db_path: Path | None = None,
+) -> None:
+    """Persist the terminal approval response for future replays, plus an
+    outbox event in the same transaction."""
+    body = json.dumps(response, default=str)
+    with _connect(db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO idempotency_keys "
+            "(caller_scope, idem_key, fingerprint, status, response, expires_at) "
+            "VALUES (?, ?, ?, 'completed', ?, '')",
+            (
+                f"approval:{thread_id}",
+                idempotency_key.strip(),
+                thread_id,
+                body,
+            ),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO outbox_events "
+            "(event_id, destination, payload, version, attempts, next_retry_at, delivered_at) "
+            "VALUES (?, 'approvals', ?, 'v1', 0, '', '')",
+            (f"approval-done:{thread_id}:{idempotency_key.strip()}", body),
+        )
+        conn.commit()
 
 
 def _now_iso() -> str:
