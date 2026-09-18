@@ -32,15 +32,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
 from backend.predict_service import load_production_model, predict_risk, to_model_units
+from backend.predict_service import ArtifactContractError
 from pipeline.monitoring.drift import detect_drift
 from pipeline.storage.ledger import (
     init_db as ledger_init_db,
     record_application,
     record_disbursement,
+    approve_pending_application,
     update_application_status,
     get_application_by_thread,
+    get_audit_trail_record,
+    record_inference,
     find_idempotent_approval,
     record_idempotent_approval,
+    list_recent_inferences,
     list_applications,
     list_disbursements,
     STATUS_APPROVED,
@@ -155,6 +160,12 @@ async def lifespan(app: FastAPI):
     app.state.pipeline, app.state.meta = load_production_model()
     # Durable ledger for applications + disbursements (core-banking slice).
     ledger_init_db()
+    # Warm up prediction_window from durable SQLite inference_logs
+    try:
+        for rec in list_recent_inferences(500):
+            prediction_window.append(rec)
+    except Exception:
+        pass
     yield
 
 
@@ -184,10 +195,19 @@ def _benchmark_payload():
 @app.get("/health", response_model=HealthResponse)
 def health():
     metrics.bump("health")
+    import os as _os
+
     meta = getattr(app.state, "meta", {})
     model_loaded = hasattr(app.state, "pipeline") and app.state.pipeline is not None
+    chk = getattr(app.state, "checkpointer", None)
+    corrupt = bool(getattr(chk, "checkpoint_corrupt", False))
+    prod_sim = _os.environ.get("CREDITFLOW_ENV", "development").lower() == "production"
+    # Readiness without customer data: bundle + checkpoint quarantine gates.
+    status = "ok" if (model_loaded and not corrupt and not prod_sim) else (
+        "degraded" if model_loaded else "unready"
+    )
     return HealthResponse(
-        status="ok",
+        status=status,
         model_loaded=model_loaded,
         model_version=meta.get("version", "unknown"),
         model_name=meta.get("model_name", "unknown"),
@@ -244,7 +264,15 @@ def predict(req: PredictRequest):
         metrics.bump("predict", (time.perf_counter() - t0) * 1000)
     # Store training-scale values so PSI compares like-with-like against
     # reference_stats.json (which was written at training time, pre-VND).
-    prediction_window.append({**to_model_units(req.model_dump()), "risk_probability": payload["risk_probability"]})
+    try:
+        inference_rec = {
+            **to_model_units(req.model_dump(), app.state.meta),
+            "risk_probability": payload["risk_probability"],
+        }
+        prediction_window.append(inference_rec)
+        record_inference(inference_rec)
+    except Exception:
+        metrics.error()
     return PredictResponse(**payload)
 
 
@@ -288,14 +316,45 @@ def model_info():
 def llm_info():
     """Report which LLM provider is configured (never leaks secrets)."""
     import os
-    from pipeline.agent.llm_provider import DEFAULT_MODEL
+    from pipeline.agent.llm_provider import (
+        DEFAULT_MODEL,
+        DEFAULT_OLLAMA_MODEL,
+        DEFAULT_GROQ_MODEL,
+    )
     from pipeline.agent.explanations import PROMPT_VERSION
-    provider = os.environ.get("CREDITFLOW_LLM_PROVIDER", "").lower().strip()
+    provider = os.environ.get("CREDITFLOW_LLM_PROVIDER", "").lower().strip() or "template"
+    if provider in ("ollama", "local", "local_ollama"):
+        model = os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL).strip() or DEFAULT_OLLAMA_MODEL
+        configured = True  # local Ollama needs no key; offline_ok probed below
+        offline_ok = False
+        try:
+            import httpx
+            from pipeline.agent.llm_provider import OLLAMA_CHAT_URL, OLLAMA_TIMEOUT
+
+            url = os.environ.get("OLLAMA_BASE_URL", OLLAMA_CHAT_URL).strip() or OLLAMA_CHAT_URL
+            base = url.rsplit("/api/chat", 1)[0]
+            r = httpx.get(f"{base}/api/tags", timeout=min(OLLAMA_TIMEOUT, 5.0))
+            offline_ok = r.status_code == 200
+        except Exception:
+            offline_ok = False
+    elif provider == "groq":
+        model = os.environ.get("GROQ_MODEL", DEFAULT_GROQ_MODEL).strip() or DEFAULT_GROQ_MODEL
+        configured = bool(os.environ.get("GROQ_API_KEY", "").strip())
+        offline_ok = False
+    elif provider == "cloudflare":
+        model = os.environ.get("CLOUDFLARE_MODEL", DEFAULT_MODEL)
+        configured = bool(os.environ.get("CLOUDFLARE_ACCOUNT_ID") and os.environ.get("CLOUDFLARE_API_TOKEN"))
+        offline_ok = False
+    else:
+        model = os.environ.get("CLOUDFLARE_MODEL", DEFAULT_MODEL)
+        configured = False
+        offline_ok = True  # deterministic template fallback works fully offline
     return {
-        "provider": provider or "template",
-        "model": os.environ.get("CLOUDFLARE_MODEL", DEFAULT_MODEL),
+        "provider": provider,
+        "model": model,
         "prompt_version": PROMPT_VERSION,
-        "configured": bool(provider == "cloudflare" and os.environ.get("CLOUDFLARE_ACCOUNT_ID") and os.environ.get("CLOUDFLARE_API_TOKEN")),
+        "configured": configured,
+        "offline_ok": offline_ok,
     }
 
 
@@ -353,7 +412,8 @@ class GraphApprovalRequest(BaseModel):
     """Request body to resume a paused workflow with human approval."""
     action: str = Field(..., description="'approve' or 'reject'")
     note: str = ""
-    idempotency_key: str = Field(default="", description="Client-supplied idempotency key for approval replay")
+    approver_id: str = Field(default="supervisor_on_duty", description="Supervisor identity approving the disbursement")
+    idempotency_key: str = Field(default="", description="Client-supplied idempotency key; required for approval")
 
 
 def _get_graph(thread_id: str):
@@ -395,6 +455,12 @@ def start_graph_workflow(req: GraphStartRequest):
         state = graph.get_state(config=run_config)
         result = dict(state.values)
 
+    # A model/gateway/graph failure is terminal FAILED: never persist a
+    # PENDING_REVIEW row and surface HTTP 503 with a stable detail code.
+    if result.get("workflow_status") == "FAILED" or isinstance(result.get("error"), str) and result.get("error", "").startswith(("MODEL_BUNDLE_INVALID", "GATEWAY_UNAVAILABLE", "CHECKPOINT_CORRUPT", "OPERATIONAL_FAILURE")) and not result.get("decision"):
+        code = result.get("error_code") or "OPERATIONAL_FAILURE"
+        metrics.error()
+        raise HTTPException(status_code=503, detail=code)
     # --- durable persistence: record the application in the SQLite ledger ---
     decision = result.get("decision", "UNKNOWN")
     app_status = {
@@ -410,10 +476,22 @@ def start_graph_workflow(req: GraphStartRequest):
             risk_level=result.get("risk_level", "UNKNOWN"),
             decision=decision,
             status=app_status,
+            application_id=result.get("application_id", ""),
+            audit_trail=result.get("audit_trail", []),
         )
     except Exception:
         metrics.error()
         ledger_row_id = None
+
+    try:
+        inference_rec = {
+            **to_model_units(req.customer_data, app.state.meta),
+            "risk_probability": float(result.get("risk_score", 0.0)),
+        }
+        prediction_window.append(inference_rec)
+        record_inference(inference_rec)
+    except Exception:
+        pass
 
     meta = result.get("explanation_meta", {})
     if meta.get("source") == "langchain_llm":
@@ -425,6 +503,7 @@ def start_graph_workflow(req: GraphStartRequest):
         "thread_id": thread_id,
         "application_id": result.get("application_id", ""),
         "decision": result.get("decision", "UNKNOWN"),
+        "error": result.get("error", ""),
         "risk_score": result.get("risk_score", 0.0),
         "risk_level": result.get("risk_level", "UNKNOWN"),
         "approval_required": result.get("approval_required", False),
@@ -435,6 +514,17 @@ def start_graph_workflow(req: GraphStartRequest):
         "workflow_complete": result.get("workflow_complete", False),
         "ledger_application_id": ledger_row_id,
         "ledger_status": app_status,
+        "basel_metrics": result.get("basel_metrics", {}),
+        "pricing": result.get("pricing", {}),
+        "cic_report": result.get("cic_report", {}),
+        "bank_statement": result.get("bank_statement", {}),
+        "authority_level": result.get("authority_level", "STP"),
+        "amortization_schedule": result.get("amortization_schedule", []),
+        "vietqr_url": result.get("vietqr_url", ""),
+        "loan_agreement_pdf": result.get("loan_agreement_pdf", ""),
+        "tuned_threshold": result.get("tuned_threshold"),
+        "business_cost": result.get("business_cost", {}),
+        "reasons": result.get("reasons", []),
     }
 
 
@@ -442,28 +532,101 @@ def start_graph_workflow(req: GraphStartRequest):
 def approve_graph_workflow(thread_id: str, req: GraphApprovalRequest):
     """Resume a paused workflow with a human approval decision.
 
-    The workflow must be in REVIEW state (approval_required=True).
+    Replay-safe single transaction: reserve PENDING_REVIEW with approver +
+    idempotency key, resume the graph, disburse only on final APPROVE.
+    The ``action`` string is informational; persisted state is authority.
     """
     from langgraph.types import Command
 
     graph = _get_graph(thread_id)
     run_config = {"configurable": {"thread_id": thread_id}}
 
+    persisted = get_application_by_thread(thread_id)
+    if persisted is None or persisted.get("status") != STATUS_PENDING_REVIEW:
+        raise HTTPException(status_code=409, detail="APPLICATION_NOT_PENDING")
+    action_approved = req.action.strip().lower() in (
+        "approve", "approved", "accept", "yes",
+    )
+    # Backwards-compatible: old clients omit the key; the server mints a
+    # per-thread key so approval still succeeds exactly once.
+    idem_key = (req.idempotency_key or "").strip() or f"auto-{thread_id}"
     # Idempotency gate (Plan 03): a replayed key returns the stored approval
     # without resuming the graph or disbursing twice.
-    idem_key = (req.idempotency_key or "").strip()
-    if idem_key:
-        replayed = find_idempotent_approval(thread_id, idem_key)
-        if replayed is not None:
-            replayed = dict(replayed)
-            replayed["replay"] = True
-            return replayed
-
+    replayed = find_idempotent_approval(thread_id, idem_key)
+    if replayed is not None:
+        replayed = dict(replayed)
+        replayed["replay"] = True
+        return replayed
+    if not action_approved:
+        try:
+            update_application_status(
+                thread_id, STATUS_REJECTED, decision="REJECT",
+                audit_trail=(persisted.get("audit_trail") or []),
+            )
+        except Exception:
+            metrics.error()
+        return {
+            "thread_id": thread_id,
+            "application_id": persisted.get("application_id", ""),
+            "decision": "REJECT",
+            "approval_required": False,
+            "approval_status": "REJECTED",
+            "workflow_complete": True,
+            "ledger_status": STATUS_REJECTED,
+            "disbursement": None,
+        }
     try:
-        result = graph.invoke(Command(resume=req.action), config=run_config)
-    except Exception:
-        state = graph.get_state(config=run_config)
-        result = dict(state.values)
+        reservation = approve_pending_application(
+            thread_id, req.approver_id.strip() or "supervisor_on_duty",
+            idem_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except LookupError:
+        match = next(
+            (d for d in list_disbursements()
+             if d.get("idempotency_key") == idem_key),
+            None,
+        )
+        if match is not None:
+            return {
+                "thread_id": thread_id,
+                "application_id": persisted.get("application_id", ""),
+                "decision": "APPROVE",
+                "approval_required": False,
+                "approval_status": "APPROVED",
+                "workflow_complete": True,
+                "ledger_status": STATUS_APPROVED,
+                "disbursement": match,
+                "replay": True,
+            }
+        raise HTTPException(status_code=409, detail="APPROVAL_CONFLICT")
+    if reservation.get("replay"):
+        match = next(
+            (d for d in list_disbursements()
+             if d.get("idempotency_key") == idem_key),
+            None,
+        )
+        return {
+            "thread_id": thread_id,
+            "application_id": persisted.get("application_id", ""),
+            "decision": "APPROVE",
+            "approval_required": False,
+            "approval_status": "APPROVED",
+            "workflow_complete": True,
+            "ledger_status": STATUS_APPROVED,
+            "disbursement": match,
+            "replay": True,
+        }
+    try:
+        result = graph.invoke(Command(resume="approve"), config=run_config)
+    except Exception as exc:
+        try:
+            update_application_status(thread_id, STATUS_PENDING_REVIEW)
+        except Exception:
+            pass
+        metrics.error()
+        raise HTTPException(status_code=502, detail=f"GRAPH_RESUME_FAILED: {exc}")
 
     meta = result.get("explanation_meta", {})
     if meta.get("source") == "langchain_llm":
@@ -471,37 +634,33 @@ def approve_graph_workflow(thread_id: str, req: GraphApprovalRequest):
         metrics.llm["latency_sum_ms"] += meta.get("latency_ms", 0)
     else:
         metrics.llm["errors"] += 1
-
-    # --- durable persistence: update ledger + write the disbursement entry ---
-    action_approved = req.action.strip().lower() in (
-        "approve", "approved", "accept", "yes",
-    )
-    new_status = STATUS_APPROVED if action_approved else STATUS_REJECTED
-    try:
-        update_application_status(
-            thread_id,
-            new_status,
-            decision=result.get("decision", "UNKNOWN"),
-        )
-    except Exception:
-        metrics.error()
-
-    disbursement = None
-    if action_approved:
-        # The application row persisted at workflow start is the source of
-        # truth for the loan amount (the approve request carries none).
+    if result.get("decision") != "APPROVE":
         try:
-            app_row = get_application_by_thread(thread_id)
-            if app_row is not None:
-                disbursement = record_disbursement(
-                    application_id=app_row["id"],
-                    loan_amount=float(
-                        app_row["customer_data"].get("loan_amount", 0.0)
-                    ),
-                )
+            update_application_status(
+                thread_id, STATUS_REJECTED,
+                decision=result.get("decision", "REJECT"),
+                audit_trail=result.get("audit_trail", []),
+            )
         except Exception:
             metrics.error()
-            disbursement = None
+        raise HTTPException(status_code=409, detail="GRAPH_RESUME_NOT_APPROVED")
+    disbursement = None
+    try:
+        app_row = get_application_by_thread(thread_id)
+        if app_row is not None:
+            disbursement = record_disbursement(
+                application_id=app_row["id"],
+                loan_amount=float(app_row["customer_data"].get("loan_amount", 0.0)),
+                idempotency_key=idem_key,
+            )
+            update_application_status(
+                thread_id, STATUS_APPROVED,
+                decision=result.get("decision", "APPROVE"),
+                audit_trail=result.get("audit_trail", []),
+            )
+    except Exception:
+        metrics.error()
+        disbursement = None
 
     response = {
         "thread_id": thread_id,
@@ -513,16 +672,25 @@ def approve_graph_workflow(thread_id: str, req: GraphApprovalRequest):
         "explanation_meta": meta,
         "audit_trail": result.get("audit_trail", []),
         "workflow_complete": result.get("workflow_complete", False),
-        "ledger_status": new_status,
+        "ledger_status": STATUS_APPROVED,
         "disbursement": disbursement,
+        "basel_metrics": result.get("basel_metrics", {}),
+        "pricing": result.get("pricing", {}),
+        "cic_report": result.get("cic_report", {}),
+        "bank_statement": result.get("bank_statement", {}),
+        "authority_level": result.get("authority_level", "STP"),
+        "amortization_schedule": result.get("amortization_schedule", []),
+        "vietqr_url": result.get("vietqr_url", ""),
+        "loan_agreement_pdf": result.get("loan_agreement_pdf", ""),
+        "tuned_threshold": result.get("tuned_threshold"),
+        "reasons": result.get("reasons", []),
     }
-    # Terminal outcome: persist idempotent record + outbox so a replay
-    # returns exactly this response without a second disbursement.
-    if idem_key:
-        try:
-            record_idempotent_approval(thread_id, idem_key, response)
-        except Exception:
-            metrics.error()
+    # Terminal outcome: persist idempotent record + outbox in one call so a
+    # replay returns exactly this response without a second disbursement.
+    try:
+        record_idempotent_approval(thread_id, idem_key, response)
+    except Exception:
+        metrics.error()
     return response
 
 
@@ -539,13 +707,25 @@ def get_graph_state(thread_id: str):
         "thread_id": thread_id,
         "application_id": result.get("application_id", ""),
         "decision": result.get("decision", "UNKNOWN"),
+        "error": result.get("error", ""),
         "risk_score": result.get("risk_score", 0.0),
         "risk_level": result.get("risk_level", "UNKNOWN"),
         "approval_required": result.get("approval_required", False),
         "approval_status": result.get("approval_status", ""),
         "explanation": result.get("explanation", ""),
+        "explanation_meta": result.get("explanation_meta", {}),
         "audit_trail": result.get("audit_trail", []),
         "workflow_complete": result.get("workflow_complete", False),
+        "basel_metrics": result.get("basel_metrics", {}),
+        "pricing": result.get("pricing", {}),
+        "cic_report": result.get("cic_report", {}),
+        "bank_statement": result.get("bank_statement", {}),
+        "authority_level": result.get("authority_level", "STP"),
+        "amortization_schedule": result.get("amortization_schedule", []),
+        "vietqr_url": result.get("vietqr_url", ""),
+        "loan_agreement_pdf": result.get("loan_agreement_pdf", ""),
+        "tuned_threshold": result.get("tuned_threshold"),
+        "reasons": result.get("reasons", []),
     }
 
 
@@ -553,9 +733,19 @@ def get_graph_state(thread_id: str):
 def get_audit_trail(application_id: str):
     """Get the audit trail for a completed or in-progress workflow.
 
-    Walks every thread in the (file-backed) checkpointer, so the trail is
-    available for workflows started before the current process too.
+    First queries the SQLite ledger in O(1) by application_id or thread_id.
+    Falls back to walking the checkpointer only if not found in the ledger.
     """
+    rec = get_audit_trail_record(application_id)
+    if rec is not None and rec.get("audit_trail"):
+        return {
+            "application_id": rec.get("application_id") or application_id,
+            "thread_id": rec.get("thread_id", ""),
+            "audit_trail": rec.get("audit_trail", []),
+            "decision": rec.get("decision", "UNKNOWN"),
+            "workflow_complete": rec.get("status") in (STATUS_APPROVED, STATUS_REJECTED),
+        }
+
     graph = _build_shared_graph()
     checkpointer = app.state.checkpointer
     for thread_id in checkpointer.threads():
@@ -578,6 +768,7 @@ def get_audit_trail(application_id: str):
 # ---------------------------------------------------------------------------
 # Core-banking evidence endpoints (durable SQLite ledger)
 # ---------------------------------------------------------------------------
+@app.get("/applications")
 @app.get("/api/applications")
 def list_loan_applications(status: str | None = None):
     """Evidence endpoint: all loan applications in the durable ledger.
@@ -588,14 +779,20 @@ def list_loan_applications(status: str | None = None):
     return {"count": len(rows), "applications": rows}
 
 
+@app.get("/disbursements")
 @app.get("/api/disbursements")
 def list_disbursement_ledger():
-    """Evidence endpoint: the actual disbursement general ledger."""
+    """Evidence endpoint: the actual disbursement general ledger.
+
+    Each row carries ``hash_valid`` (SHA-256 recomputed from the hashed fields),
+    so an edited row is visible here — tamper evidence, not immutability.
+    """
     rows = list_disbursements()
     total = sum(float(r.get("loan_amount") or 0.0) for r in rows)
     return {
         "count": len(rows),
         "total_disbursed": round(total, 2),
+        "all_hashes_valid": all(bool(r.get("hash_valid")) for r in rows),
         "disbursements": rows,
     }
 # ---------------------------------------------------------------------------

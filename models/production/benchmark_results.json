@@ -32,17 +32,17 @@
   {
     "model":"xgboost",
     "best_threshold":0.05,
-    "business_cost":273.0,
-    "val_accuracy":0.7853,
-    "val_precision":0.3512,
-    "val_recall":0.72,
-    "val_f1":0.4721,
-    "val_roc_auc":0.8418,
-    "test_accuracy":0.7773,
-    "test_precision":0.335,
+    "business_cost":293.0,
+    "val_accuracy":0.764,
+    "val_precision":0.3242,
+    "val_recall":0.71,
+    "val_f1":0.4451,
+    "val_roc_auc":0.8393,
+    "test_accuracy":0.7813,
+    "test_precision":0.34,
     "test_recall":0.68,
-    "test_f1":0.4488,
-    "test_roc_auc":0.8233
+    "test_f1":0.4533,
+    "test_roc_auc":0.8234
   },
   {
     "model":"decision_tree",

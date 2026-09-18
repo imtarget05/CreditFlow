@@ -15,7 +15,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import joblib
@@ -29,9 +31,17 @@ if str(ROOT) not in sys.path:
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+import sklearn
 
 from pipeline.data.generate_dataset import write_dataset
-from pipeline.validation.schemas import CANONICAL_COLUMNS, TARGET_COLUMN, validate_dataframe
+from pipeline.validation.schemas import (
+    CANONICAL_COLUMNS,
+    TARGET_COLUMN,
+    MONEY_UNIT,
+    TRAINING_MONEY_UNIT,
+    VND_PER_TRAINING_UNIT,
+    validate_dataframe,
+)
 from pipeline.feature_engineering.features import add_derived_features, DERIVED_FEATURES
 from pipeline.modeling.models import get_model_factory
 from pipeline.modeling.train import stratified_train_val_test_split, NUMERIC_COLUMNS
@@ -43,6 +53,40 @@ DATASET_PATH = ROOT / "data" / "creditflow_dataset.csv"
 PROD_DIR = ROOT / "models" / "production"
 BENCHMARK_CSV = PROD_DIR / "benchmark_results.csv"
 BENCHMARK_JSON = PROD_DIR / "benchmark_results.json"
+
+
+def _write_bundle(bundle_dir: Path, pipeline: Pipeline, meta: dict, results: pd.DataFrame, reference: dict) -> None:
+    """Write a self-verifying serving bundle without touching the live bundle."""
+    if not bundle_dir.is_dir():
+        raise ValueError(f"bundle staging directory does not exist: {bundle_dir}")
+    joblib.dump(pipeline, bundle_dir / "pipeline.joblib")
+    (bundle_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+    results.to_csv(bundle_dir / "benchmark_results.csv", index=False)
+    (bundle_dir / "benchmark_results.json").write_text(results.to_json(orient="records", indent=2))
+    (bundle_dir / "reference_stats.json").write_text(json.dumps(reference, indent=2))
+    artifacts = {
+        path.name: _sha256(path)
+        for path in sorted(bundle_dir.iterdir())
+        if path.is_file()
+    }
+    manifest = {"bundle_version": 1, "metadata": meta, "artifacts": artifacts}
+    (bundle_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+
+def _replace_production_bundle(bundle_dir: Path) -> None:
+    """Swap a fully written bundle into service, retaining no mixed artifact state."""
+    previous_dir = PROD_DIR.with_name(f"{PROD_DIR.name}.previous")
+    if previous_dir.exists():
+        shutil.rmtree(previous_dir)
+    if PROD_DIR.exists():
+        os.replace(PROD_DIR, previous_dir)
+    try:
+        os.replace(bundle_dir, PROD_DIR)
+    except Exception:
+        if previous_dir.exists():
+            os.replace(previous_dir, PROD_DIR)
+        raise
+    shutil.rmtree(previous_dir, ignore_errors=True)
 
 
 def _sha256(path: Path) -> str:
@@ -84,7 +128,11 @@ def train(force_regenerate: bool = False, reason: str = "") -> None:
     df = _prepare_data()
     dataset_sha256 = _sha256(DATASET_PATH)
 
-    X_train, X_val, X_test, y_train, y_val, y_test = stratified_train_val_test_split(df)
+    split_seed = 42
+    split_test_size = 0.15
+    X_train, X_val, X_test, y_train, y_val, y_test = stratified_train_val_test_split(
+        df, test_size=split_test_size, random_state=split_seed
+    )
 
     preprocessor = ColumnTransformer(
         transformers=[("num", StandardScaler(), NUMERIC_COLUMNS)]
@@ -130,18 +178,11 @@ def train(force_regenerate: bool = False, reason: str = "") -> None:
 
     results = pd.DataFrame(rows).sort_values("business_cost").reset_index(drop=True)
 
-    BENCHMARK_CSV.parent.mkdir(parents=True, exist_ok=True)
-    results.to_csv(BENCHMARK_CSV, index=False)
-    BENCHMARK_JSON.write_text(results.to_json(orient="records", indent=2))
-
     # Select production model: lowest business cost, tie-break by val F1.
     best = results.sort_values(["business_cost", "val_f1"], ascending=[True, False]).iloc[0]
     model_name = best["model"]
     best_pipe = fitted[model_name]
     version = f"{model_name}_v001"
-
-    PROD_DIR.mkdir(parents=True, exist_ok=True)
-    joblib.dump(best_pipe, PROD_DIR / "pipeline.joblib")
 
     # Confusion matrix on test set at tuned threshold (spec §9 / PRD P4)
     best_proba_test = best_pipe.predict_proba(X_test)[:, 1]
@@ -189,6 +230,23 @@ def train(force_regenerate: bool = False, reason: str = "") -> None:
         "dataset_sha256": dataset_sha256,
         "seed": 42,
         "rows": int(len(df)),
+        # --- serving contract: feature order + money units + split -----------
+        # Serving MUST read these from here instead of hardcoding them, so the
+        # artifact is the single source of truth for how inputs are interpreted.
+        "feature_order": list(NUMERIC_COLUMNS),
+        "money_unit": MONEY_UNIT,
+        "training_money_unit": TRAINING_MONEY_UNIT,
+        "vnd_per_model_unit": VND_PER_TRAINING_UNIT,
+        "sklearn_version": sklearn.__version__,
+        "split": {
+            "strategy": "stratified train/val/test",
+            "test_size": split_test_size,
+            "random_state": split_seed,
+            "n_train": int(len(X_train)),
+            "n_val": int(len(X_val)),
+            "n_test": int(len(X_test)),
+            "note": "threshold + model selection use validation only; test is reporting only",
+        },
     }
     prev_meta = {}
     try:
@@ -196,16 +254,25 @@ def train(force_regenerate: bool = False, reason: str = "") -> None:
     except (OSError, ValueError):
         prev_meta = {}
     meta.update(build_update_stamp(prev_meta, reason))
-    (PROD_DIR / "meta.json").write_text(json.dumps(meta, indent=2))
-
     # Reference statistics for ML drift monitoring (P11): snapshot of the exact
-    # training feature distributions + the production model's validation
-    # probability distribution. Served/compared by GET /drift at inference time.
-    reference = compute_reference_stats(df, list(NUMERIC_COLUMNS))
+    # TRAINING-split feature distributions + the production model's training-split
+    # probability distribution. Only the train split is used — validation/test
+    # rows must never leak into the reference the model is compared against.
+    # Served/compared by GET /drift at inference time.
+    reference = compute_reference_stats(X_train, list(NUMERIC_COLUMNS))
     reference["prediction"] = compute_prediction_reference(
-        best_pipe.predict_proba(X_val)[:, 1]
+        best_pipe.predict_proba(X_train)[:, 1]
     )
-    (PROD_DIR / "reference_stats.json").write_text(json.dumps(reference, indent=2))
+    reference["source"] = "train split (models/production/pipeline.joblib training rows)"
+    bundle_parent = PROD_DIR.parent
+    bundle_parent.mkdir(parents=True, exist_ok=True)
+    bundle_dir = Path(tempfile.mkdtemp(prefix=".production-", dir=bundle_parent))
+    try:
+        _write_bundle(bundle_dir, best_pipe, meta, results, reference)
+        _replace_production_bundle(bundle_dir)
+    except Exception:
+        shutil.rmtree(bundle_dir, ignore_errors=True)
+        raise
 
     _log_mlflow(model_name, version, meta, results, best_pipe, PROD_DIR / "pipeline.joblib")
 

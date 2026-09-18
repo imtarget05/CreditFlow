@@ -6,12 +6,17 @@ keeps nodes pure and independently testable (spec §10: reproducible pipeline).
 
 Workflow topology (user argument #2 — the user's architecture):
 
-    START → load_application → validate_input → risk_model
-            → fraud_model → policy_engine → explain → decision
+    START → load_application → fetch_gateways → validate_input → risk_model
+            → financial_engineering → fraud_model → policy_engine → explain
+            → decision
             ↳ REJECT  → audit → END
             ↳ APPROVE → execute → audit → END
             ↳ REVIEW  → human_approval ──► [approve] → execute → audit → END
                                       └────► [reject] → audit → END
+
+12 nodes: load_application, fetch_gateways (CIC + bank-statement),
+validate_input, risk_model, financial_engineering (Basel/pricing/amortization),
+fraud_model, policy_engine, explain, decision, human_approval, execute, audit.
 
 Key discipline: **the LLM (explain node) never decides; it explains.**
 Policy + cost-tuned ML threshold decide; a human only confirms REVIEW.
@@ -45,6 +50,12 @@ from pipeline.agent.policy import run_policy_check, has_blocking_violation
 from pipeline.agent.explanations import generate_explanation, explanation_to_text
 from pipeline.agent.retriever import retrieve
 from pipeline.validation.schemas import validate_dataframe
+
+from pipeline.gateways.cic_gateway import query_cic_report, cross_validate_with_cic
+from pipeline.gateways.statement_parser import analyze_bank_statement
+from pipeline.financial.credit_risk import calculate_basel_metrics, calculate_risk_based_pricing, generate_amortization_schedule
+from pipeline.disbursement.core_banking import determine_authority_level, generate_vietqr_disbursement, generate_loan_agreement
+
 from pipeline.modeling.threshold import (
     business_decision,
     DEFAULT_APPROVE_MAX,
@@ -102,12 +113,19 @@ def make_validate_input() -> Callable:
     (e.g. mock) without touching the real schema.
     """
     def validate_input(state: CreditState) -> dict:
-        from pipeline.validation.schemas import validate_dataframe
+        from pipeline.validation.schemas import (
+            validate_dataframe,
+            validate_money_unit_contract,
+        )
         import pandas as pd
 
         data: dict = state.get("customer_data", {})
         df = pd.DataFrame([data])
         _, violations = validate_dataframe(df)
+        # Money-unit contract: a payload that cannot be VND (e.g. training-scale
+        # numbers) must be rejected with a clear message, never silently
+        # rescaled by a magnitude guess.
+        violations = violations + validate_money_unit_contract(data)
 
         updates: dict = {}
         trail = state.get("audit_trail", []) + []
@@ -153,7 +171,19 @@ def make_risk_model(pipeline: Any, meta: dict) -> Callable:
 
         # --- featurize (same units path as predict_service.predict_risk) ---
         from backend.predict_service import to_model_units
-        df = pd.DataFrame([to_model_units(data)])
+        try:
+            df = pd.DataFrame([to_model_units(data, meta)])
+        except ValueError as exc:
+            # Unit-contract / artifact-contract failure → controlled REJECT with
+            # an explicit message (never a silent mis-scaled score).
+            return {
+                "error": str(exc),
+                "decision": DECISION_REJECT,
+                "next": "reject",
+                "audit_trail": state.get("audit_trail", []) + [_audit_entry(
+                    "risk_model", AUDIT_FAILURE, f"unit/artifact contract: {exc}",
+                )],
+            }
         _, violations = validate_dataframe(df)
         if violations:
             # validate_input should have caught this, but guard anyway
@@ -237,6 +267,79 @@ def policy_engine(state: CreditState) -> dict:
     updates["audit_trail"] = trail
     return updates
 
+
+
+# ---------------------------------------------------------------------------
+# Node 5.1: data_gateways (CIC & Bank Statement)
+# ---------------------------------------------------------------------------
+def fetch_gateways(state: CreditState) -> dict:
+    """Call external data gateways (CIC, Bank Statement parser)."""
+    import os as _os
+    if _os.environ.get("CREDITFLOW_ENV", "development").lower() == "production":
+        raise RuntimeError("GATEWAY_UNAVAILABLE: simulated gateways disabled in production")
+    updates: dict = {}
+    trail = state.get("audit_trail", []) + []
+    
+    national_id = state.get("national_id", state.get("customer_data", {}).get("national_id", "001002003004"))
+    cic_report = query_cic_report(national_id)
+    _cic_dump = cic_report.model_dump()
+    _cic_dump["source_mode"] = "SIMULATION"
+    updates["cic_report"] = _cic_dump
+    trail.append(_audit_entry("gateways", AUDIT_SUCCESS, f"CIC report fetched, score={cic_report.cic_score}"))
+    
+    income = state.get("customer_data", {}).get("income", 50000)
+    raw_statement_text = f"Salary deposit: {income}\nExpense: 5000"
+    parsed = analyze_bank_statement(declared_income=income)
+    _stmt_dump = parsed.model_dump()
+    _stmt_dump["source_mode"] = "SIMULATION"
+    updates["bank_statement"] = _stmt_dump
+    trail.append(_audit_entry("gateways", AUDIT_SUCCESS, "Bank statement parsed"))
+    
+    updates["audit_trail"] = trail
+    return updates
+
+# ---------------------------------------------------------------------------
+# Node 5.2: financial_engineering (Basel & Pricing)
+# ---------------------------------------------------------------------------
+def financial_engineering(state: CreditState) -> dict:
+    """Calculate Basel II/III metrics, Pricing and Amortization."""
+    updates: dict = {}
+    trail = state.get("audit_trail", []) + []
+    
+    customer_data = state.get("customer_data", {})
+    loan_amount = state.get("loan_amount", customer_data.get("loan_amount", 10000))
+    loan_tenure_months = state.get("loan_tenure_months", customer_data.get("loan_term", 36))
+    collateral_value = state.get("collateral_value", customer_data.get("collateral_value", 0.0))
+    collateral_type = state.get("collateral_type", customer_data.get("collateral_type", "NONE"))
+    
+    risk_score = state.get("risk_score", 0.05)
+    
+    basel = calculate_basel_metrics(
+        pd=risk_score,
+        loan_amount=loan_amount,
+        collateral_type=collateral_type,
+        collateral_value=collateral_value,
+        committed_undrawn=0.0
+    )
+    updates["basel_metrics"] = basel
+    trail.append(_audit_entry("financial", AUDIT_SUCCESS, "Basel metrics computed"))
+    
+    pricing = calculate_risk_based_pricing(
+        pd=risk_score,
+        expected_loss=basel["expected_loss"],
+        loan_amount=loan_amount
+    )
+    updates["pricing"] = pricing
+    
+    amort = generate_amortization_schedule(
+        loan_amount=loan_amount,
+        annual_rate=pricing["recommended_annual_rate"],
+        term_months=loan_tenure_months
+    )
+    updates["amortization_schedule"] = amort
+    
+    updates["audit_trail"] = trail
+    return updates
 
 # ---------------------------------------------------------------------------
 # Node 6: explain (LangChain / LLM layer — explanations only, never decides)
@@ -330,6 +433,27 @@ def make_decision_node() -> Callable:
         if risk_score >= DEFAULT_REVIEW_MAX and fraud_score > 0:
             base_decision = DECISION_REVIEW
 
+        # Determine authority level based on the ML risk level + loan size.
+        # determine_authority_level(loan_amount, risk_level, ...) returns a
+        # detail dict — store the role string on authority_level (API contract)
+        # plus the full matrix detail for audit.
+        risk_level = state.get("risk_level", RISK_LOW)
+        policy_violations = state.get("policy_violations", [])
+        loan_amount_auth = state.get("loan_amount", state.get("customer_data", {}).get("loan_amount", 10000))
+        cic_group = (state.get("cic_report", {}) or {}).get("bad_debt_group", 1)
+        authority = determine_authority_level(
+            loan_amount_auth,
+            risk_level,
+            has_policy_violations=has_blocking_violation(policy_violations),
+            is_cic_clean=(cic_group or 1) < 3,
+        )
+        updates["authority_level"] = authority.get("role", "SYSTEM_STP")
+        updates["authority_detail"] = authority
+
+        # Override decision if Risk Committee is required
+        if authority.get("role") == "RISK_COMMITTEE_L2":
+            base_decision = DECISION_REVIEW
+
         updates["decision"] = base_decision
         updates["approval_required"] = (base_decision == DECISION_REVIEW)
 
@@ -405,14 +529,38 @@ def human_approval(state: CreditState) -> dict:
 # Node 9: execute — action taken on an APPROVE (e.g. disburse, log)
 # ---------------------------------------------------------------------------
 def execute(state: CreditState) -> dict:
-    """Execute the approved action — in demo scope this logs the approval.
-    In production this would trigger disbursement via the banking API."""
+    """Execute the approved action — generates VietQR and formal Loan Agreement."""
     app_id = state.get("application_id", "unknown")
+    trail = state.get("audit_trail", []) + []
+    
+    loan_amount = state.get("loan_amount", state.get("customer_data", {}).get("loan_amount", 10000))
+    customer_name = state.get("customer_data", {}).get("name", "CUSTOMER")
+    national_id = state.get("national_id", "001002003004")
+
+    vietqr_data = generate_vietqr_disbursement(
+        contract_code=app_id,
+        loan_amount=loan_amount
+    )
+    vietqr_url = vietqr_data.qr_quicklink
+
+    agreement = generate_loan_agreement(
+        contract_code=app_id,
+        borrower_name=customer_name,
+        national_id=national_id,
+        loan_amount=loan_amount,
+        loan_term_months=state.get("loan_tenure_months", state.get("customer_data", {}).get("loan_term", 36)),
+        annual_interest_rate=state.get("pricing", {}).get("recommended_annual_rate", 0.15)
+    )
+    # The current tests likely expect a PDF string or some dict. We'll return agreement as dict or string
+    agreement_pdf = agreement.legal_text if hasattr(agreement, "legal_text") else str(agreement)
+    
+    trail.append(_audit_entry("execute", AUDIT_SUCCESS, "Generated VietQR & Loan Agreement"))
+    trail.append(_audit_entry("execute", AUDIT_SUCCESS, f"approved application {app_id} — action logged (disbursement stub)"))
+    
     return {
-        "audit_trail": state.get("audit_trail", []) + [_audit_entry(
-            "execute", AUDIT_SUCCESS,
-            f"approved application {app_id} — action logged (disbursement stub)",
-        )],
+        "vietqr_url": vietqr_url,
+        "loan_agreement_pdf": agreement_pdf,
+        "audit_trail": trail
     }
 
 

@@ -144,15 +144,22 @@ def detect_drift(
     Returns a report dict:
       status          NO_DRIFT | DRIFT_DETECTED | INSUFFICIENT_DATA
       n_recent        size of the recent window
+      compared        {features: int, prediction: bool} — what was actually compared
       features        {feature: {psi, status}}
       prediction      {psi, status} for risk_probability (if present)
       note            limitation statement (data drift ≠ performance degradation)
+
+    ``INSUFFICIENT_DATA`` is returned when the window is smaller than
+    *min_samples* **or** when no feature/prediction could actually be compared
+    (no reference stats, no overlapping columns, all-NaN values). An empty
+    comparison is never reported as ``NO_DRIFT``.
     """
     n = int(len(recent_df))
     report: dict = {
         "status": INSUFFICIENT_DATA,
         "n_recent": n,
         "min_samples": min_samples,
+        "compared": {"features": 0, "prediction": False},
         "features": {},
         "prediction": {},
         "note": (
@@ -189,6 +196,16 @@ def detect_drift(
                 worst = float("inf")
             else:
                 worst = max(worst, val)
+
+    report["compared"] = {
+        "features": len(report["features"]),
+        "prediction": bool(report["prediction"]),
+    }
+
+    # Nothing comparable (no overlapping columns / all-NaN window): reporting
+    # NO_DRIFT would be a false assurance — keep INSUFFICIENT_DATA instead.
+    if not report["features"] and not report["prediction"]:
+        return report
 
     report["status"] = DRIFT_DETECTED if worst > PSI_DRIFT else NO_DRIFT
     return report

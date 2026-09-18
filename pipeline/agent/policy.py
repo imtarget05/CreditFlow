@@ -74,6 +74,8 @@ def evaluate_policy(data: dict[str, Any]) -> list[str]:
         violations.append("policy_existing_defaults")
 
     # policy_credit_history_short (block)
+    # Money fields follow the single VND contract (pipeline/validation/schemas.py)
+    # and are compared as-is — no magnitude heuristic (see fraud.py).
     if credit_history < CREDIT_HISTORY_MIN and loan_amount > CREDIT_HISTORY_LARGE_LOAN:
         violations.append("policy_credit_history_short")
 

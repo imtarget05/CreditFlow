@@ -23,6 +23,28 @@ def test_app_jsx_has_preset_chips():
     assert "Khách hàng rủi ro cao" in content, "Missing high preset label"
 
 
+def test_app_jsx_surfaces_enterprise_fields():
+    """App.jsx must render the 12-node enterprise payload (CIC/Basel/pricing/VietQR).
+
+    The /predict/graph response now carries basel_metrics, pricing,
+    cic_report, bank_statement, authority_level and vietqr_url (backend/app.py
+    start/approve/get-state responses); the UI must surface them instead of
+    silently dropping them (regression guard for the update_app.py patch).
+    """
+    app_path = FRONTEND_SRC / "App.jsx"
+    content = app_path.read_text(encoding="utf-8")
+
+    for field in (
+        "basel_metrics",
+        "pricing",
+        "cic_report",
+        "bank_statement",
+        "authority_level",
+        "vietqr_url",
+    ):
+        assert field in content, f"App.jsx drops enterprise field: {field}"
+
+
 def test_app_jsx_has_backend_status_indicator():
     """App.jsx must show backend connectivity status."""
     app_path = FRONTEND_SRC / "App.jsx"

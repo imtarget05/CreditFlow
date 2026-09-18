@@ -24,7 +24,7 @@ Designed with enterprise requirements in mind, it features audit trails, human-i
 4. **Robust Feature Engineering**: Engineered 5 derived features (`debt_to_income`, `loan_to_income`, `debt_to_loan`, `employment_stability`, `credit_history_year_ratio`) with zero-division guards and robust handling of edge cases.
 5. **Stateful Decision Workflow**: Leverages **LangGraph** for a 12-node state machine (load → gateways → validate → risk → financials → fraud → policy → explain → decision → [human_approval] → execute → audit) that handles human interrupts for `REVIEW` decisions, pausing and resuming workflows asynchronously.
 6. **Core-Banking Ledger Integration**: Employs SQLite with deterministic contract codes (`HDTD-YYYYMMDD-XXXX`) and **SHA-256 tamper-evident hashes** for the disbursement ledger.
-7. **Explainable AI**: Cloudflare Workers AI, OpenAI, Anthropic, Google, and Local vLLM are supported. A strict Policy Router blocks CONFIDENTIAL PII from reaching Public Cloud APIs, automatically routing to Local vLLM or Deterministic Fallback instead. The LLM *explains*, it does *not* decide.
+7. **Explainable AI**: Deployment duy nhất: **PRIVATE ON-PREM** — lõi Deterministic ML + Rule Engine nội bộ (Rule Filter DTI/LTI + TF-IDF cosine inference), LLM memo chạy Private vLLM nội bộ (Local VPC: `ollama`/`local_vllm`/`private-vllm`). **Policy Guard cứng: data `CONFIDENTIAL` tuyệt đối chặn, không fallback Public Cloud** (OpenAI/Groq/Cloudflare/Anthropic/Google) — public cloud chỉ dùng cho data PUBLIC hoặc tắt hẳn. The LLM *explains*, it does *not* decide. Training = Traditional ML Training from Scratch (LogReg/XGBoost tabular, `colab/train_credit_T4.ipynb`). Tuân thủ Banking Secrecy / GDPR / SBV: CONFIDENTIAL never leaks.
 8. **Production Monitoring**: Includes **PSI (Population Stability Index)** drift detection to track feature and prediction distribution shifts against baselines.
 9. **Fraud Detection**: Rule-based deterministic fraud flags integrated upstream of the ML pipeline.
 10. **Print-Ready Decision Slips**: Browser printing optimized with `@media print` CSS, featuring signature lines for loan officers and branch managers.
@@ -194,11 +194,34 @@ The system was trained on a **5,000-row synthetic proxy dataset** (seed `42`, ~1
 
 ---
 
-## ☁️ Deployment
+## ☁️ Deployment — CHỐT: PRIVATE ON-PREM (ENTERPRISE)
 
-- **Backend**: Configured for deployment on **Render** (via `render.yaml`).
-- **Frontend**: Configured for deployment on **GitHub Pages**.
-- **CI/CD**: Automated via **GitHub Actions** for testing and deployment verification.
+- **Deployment duy nhất: PRIVATE ON-PREM** — lõi Deterministic ML + Rule Engine nội bộ, LLM memo chạy Private vLLM nội bộ (Local VPC). Không fallback Public Cloud cho data CONFIDENTIAL.
+- **Training**: Traditional ML Training from Scratch trên Colab (`colab/train_credit_T4.ipynb`, LogReg/XGBoost tabular).
+- **Processing**: Rule Filter DTI/LTI + TF-IDF cosine inference (local, offline-safe).
+- **Policy Guard cứng** (`pipeline/agent/explanations.py:is_public_cloud`): `CONFIDENTIAL` tuyệt đối chặn gửi ra public cloud (OpenAI/Groq/Cloudflare/Anthropic/Google) → route về Private vLLM (`ollama`/`local_vllm`) hoặc deterministic template fallback. Public cloud chỉ dùng cho data PUBLIC hoặc tắt hẳn.
+- **Compliance**: Banking Secrecy / GDPR / SBV — CONFIDENTIAL never leaks. Xem `docs/DEPLOYMENT_PRIVATE_ONPREM.md`.
+- **Legacy refs**: `render.yaml` / GitHub Pages / public-cloud env chỉ còn tính lịch sử, không phải deployment được hỗ trợ.
+
+---
+
+## 🛡️ Decision Safety (plan 2026-09-18)
+
+- **Versioned model bundle**: `models/production/manifest.json` khoá SHA-256 của
+  từng artifact + metadata hợp đồng (`feature_order`, `vnd_per_model_unit`).
+  Startup validate bundle — thiếu/sai hợp đồng → 503 `MODEL_BUNDLE_INVALID`.
+- **Replay-safe approval**: `POST /predict/graph/{thread}/approve` là một
+  transaction (reserve `PENDING_REVIEW` + `approver_id` + `idempotency_key`,
+  resume graph, chỉ disburse khi `APPROVE`). `UNIQUE(disbursements.application_id)`
+  + idempotency key đảm bảo **một hồ sơ = một dòng tiền**; duplicate approval
+  trả receipt cũ (`replay: true`).
+- **Explicit failures**: model/gateway/checkpoint lỗi → `workflow_status=FAILED`
+  + `error_code` (503), không bao giờ tạo row `PENDING_REVIEW`. Simulator gắn
+  `source_mode=SIMULATION` và bị chặn khi `CREDITFLOW_ENV=production`.
+- **Checkpoint JSON-only**: file hỏng được quarantine (timestamp) và health
+  báo `CHECKPOINT_CORRUPT` thay vì âm thầm bỏ qua.
+
+Chi tiết vận hành: `docs/DEPLOYMENT_PRIVATE_ONPREM.md` (§6).
 
 ---
 

@@ -31,6 +31,9 @@ from fastapi.testclient import TestClient
 from backend.app import app
 from pipeline.storage.ledger import init_db, ledger_path
 
+# NOTE: disbursement SQLite tests are local-only fast. The `slow` marker is
+# applied only to tests that spin the full LangGraph + TestClient workflow.
+
 CONTRACT_CODE_RE = re.compile(r"^HDTD-\d{8}-\d{4}$")
 
 BASE_PROFILE = {
@@ -90,7 +93,9 @@ def _start_review_workflow(client: TestClient) -> tuple[dict, dict]:
 
 # ---------------------------------------------------------------------------
 # E2E: submit -> review -> approve -> contract + disbursement in the ledger
+# SLOW: each test spins the full 12-node LangGraph via TestClient (~20s).
 # ---------------------------------------------------------------------------
+@pytest.mark.slow
 def test_e2e_submit_review_approve_creates_contract_and_disbursement(
     client, ledger_env
 ):
@@ -135,7 +140,8 @@ def test_e2e_submit_review_approve_creates_contract_and_disbursement(
     assert dis_row["loan_amount"] == profile["loan_amount"]
     assert dis_row["status"] == "COMPLETED"
 
-    # 4. ledger_hash là SHA-256 của các trường bất biến — chống đục sửa.
+    # 4. ledger_hash = SHA-256 trên 4 trường được hash của bản ghi giải ngân;
+    # đọc lại qua list_disbursements để phát hiện sửa đổi (không phải bất biến).
     expected_hash = hashlib.sha256(
         (
             f"{dis_row['application_id']}|{dis_row['contract_code']}|"
@@ -146,6 +152,7 @@ def test_e2e_submit_review_approve_creates_contract_and_disbursement(
     conn.close()
 
 
+@pytest.mark.slow
 def test_e2e_reject_flow_writes_no_disbursement(client, ledger_env):
     profile, started = _start_review_workflow(client)
     thread_id = started["thread_id"]
@@ -170,6 +177,7 @@ def test_e2e_reject_flow_writes_no_disbursement(client, ledger_env):
     conn.close()
 
 
+@pytest.mark.slow
 def test_evidence_endpoints_return_ledger_records(client, ledger_env):
     profile, started = _start_review_workflow(client)
     thread_id = started["thread_id"]
@@ -203,6 +211,7 @@ def test_evidence_endpoints_return_ledger_records(client, ledger_env):
     assert all(a["status"] == "APPROVED" for a in r.json()["applications"])
 
 
+@pytest.mark.slow
 def test_ledger_persists_across_process_restart(client, ledger_env):
     """RAM-only graphs die on restart; the SQLite ledger row must survive."""
     profile, started = _start_review_workflow(client)
@@ -223,6 +232,7 @@ def test_ledger_persists_across_process_restart(client, ledger_env):
     assert ledger_path().exists()
 
 
+@pytest.mark.slow
 def test_disbursement_contract_codes_sequence_per_day(client, ledger_env):
     """Two approvals in the same day must yield a monotonic XXXX sequence."""
     codes = []

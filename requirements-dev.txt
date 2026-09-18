@@ -2,3 +2,5 @@
 -r requirements.txt
 pytest>=8.0
 requests>=2.31
+# VCR replay integration tests (tests/cassettes/, record_mode=once, offline-safe).
+vcrpy>=6.0

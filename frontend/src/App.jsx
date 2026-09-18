@@ -71,7 +71,7 @@ const FIELDS = [
     group: "Thu nhập & công việc",
     note: "Khách hàng kiếm bao nhiêu và ổn định ra sao.",
     items: [
-      { key: "income", label: "Thu nhập mỗi tháng", placeholder: "Ví dụ: 8.000.000", hint: "Đồng / tháng", type: "text", money: true, min: 0 },
+      { key: "income", label: "Thu nhập mỗi tháng", placeholder: "Ví dụ: 8.000.000", hint: "Đồng / tháng · tối thiểu 1.000.000", type: "text", money: true, min: 1000000, minLabel: "1.000.000đ (đơn vị đồng)" },
       { key: "age", label: "Tuổi", placeholder: "Ví dụ: 35", hint: "18–100 tuổi", type: "number", step: "1", min: 18, max: 100 },
       { key: "employment_years", label: "Số năm làm việc liên tục", placeholder: "Ví dụ: 8", hint: "năm · không vượt quá tuổi − 18", type: "number", step: "any", min: 0 },
     ],
@@ -80,7 +80,7 @@ const FIELDS = [
     group: "Khoản vay muốn xin",
     note: "Số tiền muốn vay và tình trạng nợ hiện tại.",
     items: [
-      { key: "loan_amount", label: "Số tiền muốn vay", placeholder: "Ví dụ: 120.000.000", hint: "Đồng", type: "text", money: true, min: 0 },
+      { key: "loan_amount", label: "Số tiền muốn vay", placeholder: "Ví dụ: 120.000.000", hint: "Đồng · tối thiểu 1.000.000", type: "text", money: true, min: 1000000, minLabel: "1.000.000đ (đơn vị đồng)" },
       { key: "loan_term", label: "Vay trong bao lâu", placeholder: "Ví dụ: 36", hint: "tháng", type: "number", step: "1", min: 1 },
       { key: "existing_debt", label: "Nợ đang có", placeholder: "Ví dụ: 15.000.000", hint: "Tổng nợ hiện tại, tính bằng đồng", type: "text", money: true, min: 0 },
     ],
@@ -130,7 +130,7 @@ const PRESETS = {
 };
 
 function recommendation(level, decision) {
-  if (level === "LOW" && decision === "APPROVE") {
+  if (decision === "APPROVE") {
     return {
       title: "Duyệt khoản vay",
       badge: "APPROVE",
@@ -141,11 +141,13 @@ function recommendation(level, decision) {
       ],
     };
   }
-  if (level === "MEDIUM" && decision === "REVIEW") {
+  if (decision === "REVIEW") {
     return {
       title: "Giữ lại — xem xét thêm",
       badge: "REVIEW",
-      detail: "Hồ sơ có điểm cần lưu ý. Yêu cầu thêm giấy tờ hoặc trao đổi với bộ phận rủi ro trước khi quyết.",
+      detail: level === "LOW"
+        ? "Mức rủi ro mô hình thấp nhưng vượt ngưỡng an toàn tự động hoặc có cờ kiểm soát. Yêu cầu thẩm định viên rà soát."
+        : "Hồ sơ có điểm cần lưu ý. Yêu cầu thêm giấy tờ hoặc trao đổi với bộ phận rủi ro trước khi quyết.",
       checklist: [
         "Yêu cầu bổ sung giấy tờ hoặc tài sản đảm bảo",
         "Xem lại số tiền vay so với thu nhập",
@@ -200,6 +202,9 @@ export default function App() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [history, setHistory] = useState(loadHistory);
   const [updateNote, setUpdateNote] = useState(null);
+  const [approving, setApproving] = useState(false);
+  const [ledgerApps, setLedgerApps] = useState([]);
+  const [ledgerDisbursements, setLedgerDisbursements] = useState([]);
 
   const apiLabel = PRIMARY_BASE === "/api" ? "proxy dev /api → :8080" : PRIMARY_BASE;
   const online = health?.status === "ok";
@@ -220,7 +225,7 @@ export default function App() {
         if (raw === "" || raw == null || raw === undefined) { errs[f.key] = "Trường này là bắt buộc"; continue; }
         const v = f.money ? parseVND(raw) : Number(raw);
         if (!Number.isFinite(v)) { errs[f.key] = "Phải là một con số"; continue; }
-        if (f.min !== undefined && v < f.min) errs[f.key] = `Phải ≥ ${f.min}`;
+        if (f.min !== undefined && v < f.min) errs[f.key] = f.minLabel ? `Phải ≥ ${f.minLabel}` : `Phải ≥ ${f.min}`;
         if (f.max !== undefined && v > f.max) errs[f.key] = `Phải ≤ ${f.max}`;
       }
     }
@@ -267,6 +272,42 @@ export default function App() {
     catch { setHealth({ status: "unreachable" }); }
   }
 
+  async function handleHumanDecision(action) {
+    if (!result?.thread_id) return;
+    setApproving(true);
+    try {
+      const r = await fetchJson(`/predict/graph/${result.thread_id}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, note: `Thẩm định viên phê duyệt: ${action}` }),
+      });
+      if (!r.ok) throw new Error(`Lỗi duyệt (${r.status})`);
+      const data = await r.json();
+      setResult((prev) => ({
+        ...prev,
+        ...data,
+        risk_probability: data.risk_score ?? prev.risk_probability,
+        decision: data.decision,
+        approval_required: false,
+        approval_status: data.approval_status,
+        disbursement: data.disbursement,
+      }));
+      setHistory((h) => [{
+        id: `${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+        at: Date.now(),
+        inputs: { ...submitted?.inputs },
+        prob: data.risk_score ?? result.risk_probability,
+        level: data.risk_level ?? result.risk_level,
+        decision: data.decision,
+        model: `${result.model_name} · ${result.model_version} (${action.toUpperCase()})`,
+      }, ...h].slice(0, HISTORY_MAX));
+    } catch (err) {
+      setError(`Không thể gửi quyết định: ${err.message}`);
+    } finally {
+      setApproving(false);
+    }
+  }
+
   async function submit(e) {
     e.preventDefault();
     const errs = validate(form);
@@ -276,12 +317,69 @@ export default function App() {
     try {
       const payload = {};
       for (const g of FIELDS) for (const f of g.items) payload[f.key] = f.money ? parseVND(form[f.key]) : Number(form[f.key]);
-      const r = await fetchJson("/predict", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        const detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || body);
-        throw new Error(`Không thể kiểm tra rủi ro (${r.status}): ${detail}`);
+
+      let body = null;
+      // Try LangGraph workflow first (HITL + Ledger + Explain)
+      try {
+        const rGraph = await fetchJson("/predict/graph", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ customer_data: payload }),
+        });
+        if (rGraph.ok) {
+          const gBody = await rGraph.json();
+          if (gBody.error) {
+            // Workflow rejected the profile: show the explicit validation message
+            // (e.g. money-unit contract violation) instead of a silent REJECT.
+            throw new Error(`Hồ sơ không hợp lệ: ${gBody.error}`);
+          }
+          body = {
+            risk_probability: gBody.risk_score ?? 0.0,
+            risk_level: gBody.risk_level ?? "UNKNOWN",
+            decision: gBody.decision ?? "UNKNOWN",
+            model_name: health?.model_name || "CreditFlow-Graph",
+            model_version: health?.model_version || "v1",
+            thread_id: gBody.thread_id,
+            application_id: gBody.application_id,
+            approval_required: gBody.approval_required,
+            approval_status: gBody.approval_status,
+            explanation: gBody.explanation,
+            audit_trail: gBody.audit_trail,
+            ledger_application_id: gBody.ledger_application_id,
+            reasons: gBody.reasons && gBody.reasons.length
+              ? gBody.reasons
+              : (gBody.audit_trail || [])
+                  .filter((a) => a.step === "risk_model" && a.detail)
+                  .map((a) => a.detail),
+            threshold: {
+              tuned_threshold: gBody.tuned_threshold ?? null,
+              approve_max: 0.5,
+              review_max: 0.8,
+            },
+            basel_metrics: gBody.basel_metrics || {},
+            pricing: gBody.pricing || {},
+            cic_report: gBody.cic_report || {},
+            bank_statement: gBody.bank_statement || {},
+            authority_level: gBody.authority_level || "STP",
+            amortization_schedule: gBody.amortization_schedule || [],
+            vietqr_url: gBody.vietqr_url || "",
+            loan_agreement_pdf: gBody.loan_agreement_pdf || "",
+          };
+        }
+      } catch {
+        /* fallback to /predict */
       }
+
+      if (!body) {
+        const r = await fetchJson("/predict", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        const pBody = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const detail = typeof pBody.detail === "string" ? pBody.detail : JSON.stringify(pBody.detail || pBody);
+          throw new Error(`Không thể kiểm tra rủi ro (${r.status}): ${detail}`);
+        }
+        body = pBody;
+      }
+
       setResult(body);
       setSubmitted({ inputs: { ...payload }, at: Date.now() });
       setHistory((h) => [{
@@ -337,6 +435,25 @@ export default function App() {
     } catch { setMetrics(null); setMonError(`Không kết nối được backend (${apiLabel}). Khởi động backend trước: ${API_START_HINT}`); }
   }
 
+  async function fetchLedger() {
+    try {
+      const [rApps, rDisb] = await Promise.all([
+        fetchJson("/applications"),
+        fetchJson("/disbursements"),
+      ]);
+      if (rApps.ok) {
+        const data = await rApps.json();
+        setLedgerApps(data.applications || []);
+      }
+      if (rDisb.ok) {
+        const data = await rDisb.json();
+        setLedgerDisbursements(data.disbursements || []);
+      }
+    } catch (err) {
+      console.error("fetchLedger error:", err);
+    }
+  }
+
   const formInvalid = Object.keys(validate(form)).length > 0;
 
   useEffect(() => {
@@ -346,7 +463,12 @@ export default function App() {
     return () => clearInterval(t);
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, []);
-  useEffect(() => { if (tab === "model") fetchModelInfo(); if (tab === "monitor") fetchMetrics(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tab]);
+  useEffect(() => {
+    if (tab === "model") fetchModelInfo();
+    if (tab === "monitor") fetchMetrics();
+    if (tab === "ledger") fetchLedger();
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [tab]);
 
   const toneClass = !result ? "" : result.decision === "APPROVE" ? "good" : result.decision === "REJECT" ? "bad" : "warn";
   const rec = result && !loading ? recommendation(result.risk_level, result.decision) : null;
@@ -381,6 +503,7 @@ export default function App() {
           {[
             ["predict", "Chấm rủi ro"],
             ["history", "Lịch sử"],
+            ["ledger", "Sổ cái tín dụng"],
             ["model", "Model đang dùng"],
             ["monitor", "Theo dõi"],
           ].map(([name, label]) => (
@@ -513,13 +636,77 @@ export default function App() {
 
                     <table className="fact-table">
                       <tbody>
-                        <tr><th>Ngưỡng áp dụng</th><td>Duyệt &lt; {result.threshold?.approve_max} · Xem xét &lt; {result.threshold?.review_max}</td></tr>
+                        <tr><th>Ngưỡng áp dụng</th><td>Duyệt khi P &lt; {result.threshold?.tuned_threshold ?? result.threshold?.approve_max} · Xem xét khi P &lt; {result.threshold?.review_max} (tuned threshold học từ validation)</td></tr>
                         <tr><th>Model</th><td>{result.model_name} · {result.model_version}</td></tr>
                         {result.reasons && result.reasons.length > 0 && (
                           <tr><th>Lý do chính</th><td>{result.reasons.join("; ")}</td></tr>
                         )}
+                        {result.authority_level && (
+                          <tr><th>Thẩm quyền phê duyệt</th><td>{typeof result.authority_level === "string" ? result.authority_level : result.authority_level?.role}</td></tr>
+                        )}
+                        {result.cic_report && Object.keys(result.cic_report).length > 0 && (
+                          <tr><th>CIC</th><td>Điểm {result.cic_report.cic_score} · Nhóm {result.cic_report.bad_debt_group}{result.cic_report.legal_warning ? ` — ${result.cic_report.legal_warning}` : ""}</td></tr>
+                        )}
+                        {result.bank_statement && Object.keys(result.bank_statement).length > 0 && (
+                          <tr><th>Sao kê</th><td>Thu nhập xác minh {fmtNumber(result.bank_statement.verified_average_salary)} · {result.bank_statement.analyst_summary}</td></tr>
+                        )}
+                        {result.basel_metrics && Object.keys(result.basel_metrics).length > 0 && (
+                          <tr><th>Basel (PD/LGD/EAD)</th><td>{result.basel_metrics.pd} / {result.basel_metrics.lgd} / {fmtNumber(result.basel_metrics.ead)} · EL {fmtNumber(result.basel_metrics.expected_loss)} · RWA {fmtNumber(result.basel_metrics.rwa)} · Xếp hạng {result.basel_metrics.rating_grade}</td></tr>
+                        )}
+                        {result.pricing && Object.keys(result.pricing).length > 0 && (
+                          <tr><th>Định giá</th><td>Lãi suất {((result.pricing.recommended_annual_rate || 0) * 100).toFixed(2)}%/năm · Hạn mức an toàn {fmtNumber(result.pricing.max_safe_credit_limit)}</td></tr>
+                        )}
+                        {result.vietqr_url && (
+                          <tr><th>Giải ngân VietQR</th><td><a href={result.vietqr_url} target="_blank" rel="noreferrer">Mở mã VietQR giải ngân</a></td></tr>
+                        )}
                       </tbody>
                     </table>
+
+                    {result.explanation && (
+                      <div style={{ marginTop: "14px", padding: "12px 14px", background: "var(--sheet-2)", borderRadius: "var(--radius)", border: "1px solid var(--rule)" }}>
+                        <div className="pane-title" style={{ marginBottom: "6px" }}>Giải trình AI & Thẩm định quy định</div>
+                        <p style={{ margin: 0, fontSize: "13.5px", lineHeight: "1.6", whiteSpace: "pre-wrap" }}>{result.explanation}</p>
+                      </div>
+                    )}
+
+                    {result.disbursement && (
+                      <div className="banner" style={{ marginTop: "14px", border: "2px solid var(--good)", background: "var(--good-wash)" }}>
+                        <strong style={{ color: "var(--good)" }}>✓ Đã kích hoạt giải ngân tự động (Sổ cái)</strong>
+                        <div style={{ fontSize: "13.5px", marginTop: "4px" }}>
+                          Mã hợp đồng: <strong>{result.disbursement.contract_code || result.disbursement.disbursement_id}</strong><br />
+                          Số tiền giải ngân: <strong>{fmtNumber(result.disbursement.loan_amount || result.disbursement.amount)} VND</strong> · Trạng thái: <strong>{result.disbursement.status}</strong>
+                        </div>
+                      </div>
+                    )}
+
+                    {result.approval_required && result.decision === "REVIEW" && (
+                      <div className="banner" style={{ marginTop: "14px", border: "2px solid var(--warn)", background: "var(--warn-wash)" }}>
+                        <strong>Yêu cầu phê duyệt cấp quản lý (HITL)</strong>
+                        <p style={{ margin: "6px 0 10px", fontSize: "13.5px" }}>
+                          Hồ sơ thuộc diện rà soát theo chính sách rủi ro. Cán bộ thẩm định đưa ra quyết định:
+                        </p>
+                        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            className="primary"
+                            style={{ background: "var(--good)", borderColor: "var(--good)", padding: "8px 16px" }}
+                            disabled={approving}
+                            onClick={() => handleHumanDecision("approve")}
+                          >
+                            {approving ? "Đang xử lý…" : "✓ Phê duyệt cho vay"}
+                          </button>
+                          <button
+                            type="button"
+                            className="primary"
+                            style={{ background: "var(--bad)", borderColor: "var(--bad)", padding: "8px 16px" }}
+                            disabled={approving}
+                            onClick={() => handleHumanDecision("reject")}
+                          >
+                            {approving ? "Đang xử lý…" : "✕ Từ chối cho vay"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="readout-actions">
                       <button type="button" className="primary" onClick={() => window.print()}>In phiếu</button>
@@ -593,6 +780,93 @@ export default function App() {
                   <div className="empty-title">Chưa chấm hồ sơ nào</div>
                   <p>Sang tab <strong>Chấm rủi ro</strong>, điền một hồ sơ và nhấn Chấm — mỗi kết quả tự ghi một dòng vào sổ này.</p>
                 </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab === "ledger" && (
+          <div className="sheet">
+            <div className="sheet-head">
+              <div>
+                <h2>Sổ cái tín dụng &amp; Giải ngân (Durable Ledger)</h2>
+                <p>Hồ sơ và lệnh giải ngân được lưu bền trong SQLite. Mỗi lệnh có hash SHA-256 tamper-evident: sửa dữ liệu đã hash sẽ bị phát hiện khi đọc lại — không phải bảo đảm bất biến.</p>
+              </div>
+              <button type="button" className="ghost" onClick={fetchLedger}>Làm mới sổ cái</button>
+            </div>
+            <div className="pad">
+              <div className="next-title">Sổ giải ngân ({ledgerDisbursements.length} hợp đồng)</div>
+              <p className="detail-note">Các khoản vay đã qua thẩm định phê duyệt và ký quỹ giải ngân thành công.</p>
+              {ledgerDisbursements.length > 0 ? (
+                <div className="table-wrap" style={{ marginBottom: "28px" }}>
+                  <table className="grid">
+                    <thead>
+                      <tr>
+                        <th>Mã hợp đồng</th>
+                        <th>Hồ sơ gốc</th>
+                        <th>Số tiền</th>
+                        <th>Trạng thái</th>
+                        <th>Mã băm kiểm toán (Ledger Hash)</th>
+                        <th>Thời gian giải ngân</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ledgerDisbursements.map((d) => (
+                        <tr key={d.id || d.contract_code}>
+                          <td><strong>{d.contract_code}</strong></td>
+                          <td>#{d.application_id}</td>
+                          <td><strong>{fmtNumber(d.loan_amount)} VND</strong></td>
+                          <td><span className={`pill ${d.status === "COMPLETED" || d.status === "DISBURSED" ? "good" : "warn"}`}>{d.status}</span></td>
+                          <td><code>{d.ledger_hash ? `${d.ledger_hash.slice(0, 16)}…` : "—"}</code></td>
+                          <td>{fmtTime(d.disbursed_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="detail-note" style={{ marginBottom: "28px" }}>Chưa có hợp đồng nào được giải ngân trong sổ cái.</p>
+              )}
+
+              <div className="next-title">Sổ hồ sơ vay ({ledgerApps.length} hồ sơ)</div>
+              <p className="detail-note">Hồ sơ thẩm định được ghi nhận trong cơ sở dữ liệu bền vững.</p>
+              {ledgerApps.length > 0 ? (
+                <div className="table-wrap">
+                  <table className="grid">
+                    <thead>
+                      <tr>
+                        <th>Mã hồ sơ (ID)</th>
+                        <th>Khoản vay</th>
+                        <th>Thu nhập</th>
+                        <th>Xác suất</th>
+                        <th>Mức rủi ro</th>
+                        <th>Quyết định</th>
+                        <th>Trạng thái</th>
+                        <th>Thời gian</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ledgerApps.map((a) => (
+                        <tr key={a.id || a.thread_id}>
+                          <td><code>{(a.application_id || a.thread_id || String(a.id)).slice(0, 14)}…</code></td>
+                          <td>{fmtNumber(a.customer_data?.loan_amount ?? a.loan_amount)}</td>
+                          <td>{fmtNumber(a.customer_data?.income ?? a.monthly_income)}</td>
+                          <td>{a.risk_score != null ? `${(Number(a.risk_score) * 100).toFixed(1)}%` : "—"}</td>
+                          <td>{a.risk_level || "—"}</td>
+                          <td>
+                            <span className={`pill ${a.decision === "APPROVE" ? "good" : a.decision === "REJECT" ? "bad" : "warn"}`}>
+                              {a.decision || "PENDING"}
+                            </span>
+                          </td>
+                          <td>{a.status}</td>
+                          <td>{fmtTime(a.created_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="detail-note">Chưa có hồ sơ nào trong sổ cái cơ sở dữ liệu.</p>
               )}
             </div>
           </div>

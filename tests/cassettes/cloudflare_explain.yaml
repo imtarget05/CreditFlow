@@ -1,0 +1,17 @@
+# VCR cassette for test_vcr_cloudflare_explain_replays_contract.
+# Recorded contract for POST .../accounts/test-replay/ai/run/@cf/test.
+# record_mode=once: replayed offline; Authorization is filtered, never stored.
+interactions:
+- request:
+    body: null
+    headers:
+      Content-Type: ['application/json']
+    method: POST
+    uri: https://api.cloudflare.com/client/v4/accounts/test-replay/ai/run/@cf/test
+  response:
+    body:
+      string: '{"result": {"response": "{\"summary\": \"Rui ro cao: DTI vuot nguong chap nhan.\", \"risk_factors\": [\"DTI 1.875 vuot nguong\", \"Khoan vay lon so voi thu nhap\"], \"recommendation_note\": \"Kiem tra nguon tra no cho ky han con lai.\", \"confidence\": \"high\"}"}}'
+    headers:
+      Content-Type: ['application/json']
+    status: {code: 200, message: OK}
+recorded_with: vcrpy

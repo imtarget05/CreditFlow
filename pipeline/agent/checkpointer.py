@@ -17,6 +17,8 @@ Demo scope: single-process, pickle file, atomic replace (tmp + os.replace).
 """
 from __future__ import annotations
 
+import base64
+import json
 import os
 import pickle
 import threading
@@ -49,13 +51,49 @@ def checkpoint_path() -> Path:
 _snapshot_lock = threading.Lock()
 
 
+def _encode_obj(obj: Any) -> Any:
+    """Secure JSON encoder for primitives, bytes, and tuple keys/values."""
+    if isinstance(obj, bytes):
+        return {"__bytes__": base64.b64encode(obj).decode("ascii")}
+    if isinstance(obj, tuple):
+        return {"__tuple__": [_encode_obj(x) for x in obj]}
+    if isinstance(obj, list):
+        return [_encode_obj(x) for x in obj]
+    if isinstance(obj, dict):
+        return {
+            (str(k) if not isinstance(k, tuple) else "__tuple_key__" + json.dumps([_encode_obj(x) for x in k])): _encode_obj(v)
+            for k, v in obj.items()
+        }
+    return obj
+
+
+def _decode_obj(obj: Any) -> Any:
+    """Secure JSON decoder reconstructing tuples and bytes without eval/pickle."""
+    if isinstance(obj, dict):
+        if "__bytes__" in obj:
+            return base64.b64decode(obj["__bytes__"])
+        if "__tuple__" in obj:
+            return tuple(_decode_obj(x) for x in obj["__tuple__"])
+        res = {}
+        for k, v in obj.items():
+            if k.startswith("__tuple_key__"):
+                real_k = tuple(_decode_obj(x) for x in json.loads(k[len("__tuple_key__"):]))
+            else:
+                real_k = k
+            res[real_k] = _decode_obj(v)
+        return res
+    if isinstance(obj, list):
+        return [_decode_obj(x) for x in obj]
+    return obj
+
+
 class FileCheckpointSaver(InMemorySaver):
-    """``InMemorySaver`` that persists checkpoint stores to a pickle file.
+    """``InMemorySaver`` that persists checkpoint stores securely without pickle RCE.
 
     The parent class keeps full checkpoint semantics (interrupts, pending
-    writes, thread isolation) in three in-memory stores; this subclass only
-    adds load-on-init and snapshot-after-write so the paused workflow state
-    survives a process restart.  Resume with:
+    writes, thread isolation) in three in-memory stores; this subclass
+    adds load-on-init and snapshot-after-write with secure JSON serialization
+    so the paused workflow state survives a process restart.  Resume with:
 
         graph.invoke(Command(resume="approve"), config={"configurable": {"thread_id": ...}})
     """
@@ -67,17 +105,7 @@ class FileCheckpointSaver(InMemorySaver):
 
     # -- persistence ---------------------------------------------------------
     def _snapshot(self) -> None:
-        """Atomically persist the three checkpoint stores.
-
-        The outer ``storage`` defaultdict carries a lambda default factory
-        (unpicklable), so it is flattened to plain dicts; the inner
-        ``defaultdict(dict)`` levels are rebuilt on load.
-
-        The tmp file name is unique per call: LangGraph invokes ``put`` /
-        ``put_writes`` from worker threads concurrently, and a shared
-        ``.tmp`` name would make one thread's ``os.replace`` unlink another
-        thread's tmp file mid-write (FileNotFoundError race).
-        """
+        """Atomically persist the three checkpoint stores using safe JSON."""
         data = {
             "storage": {
                 thread_id: {
@@ -95,26 +123,37 @@ class FileCheckpointSaver(InMemorySaver):
                 f"{self._path.name}.tmp-{os.getpid()}-{uuid.uuid4().hex[:8]}"
             )
             try:
-                with open(tmp, "wb") as f:
-                    pickle.dump(data, f)
+                encoded = _encode_obj(data)
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(encoded, f)
                 os.replace(tmp, self._path)
             finally:
                 if tmp.exists():
                     tmp.unlink()
 
     def _load(self) -> None:
-        """Restore stores from the checkpoint file (no-op if absent).
+        """Restore stores from the checkpoint file (JSON only, fail-closed).
 
-        A corrupted file is ignored — the API starts fresh rather than
-        crashing at import time.  The SQLite ledger keeps the authoritative
-        application/disbursement records either way.
+        A missing file starts fresh. An unreadable/corrupt file is
+        quarantined with a timestamp suffix and the saver starts empty;
+        ``checkpoint_corrupt`` is set so ``/health`` reports unready until
+        the operator resolves the quarantined file.
         """
+        self.checkpoint_corrupt: bool = False
+        self.quarantined_path = None
         if not self._path.exists():
             return
         try:
-            with open(self._path, "rb") as f:
-                data = pickle.load(f)
-        except (pickle.UnpicklingError, EOFError, OSError, AttributeError):
+            with open(self._path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    data = _decode_obj(json.loads(content))
+                else:
+                    return
+        except Exception:
+            self._quarantine_corrupt_file()
+            return
+        if not data:
             return
         storage: defaultdict = defaultdict(lambda: defaultdict(dict))
         for thread_id, ns_map in data.get("storage", {}).items():
@@ -125,6 +164,22 @@ class FileCheckpointSaver(InMemorySaver):
         self.storage = storage
         self.writes = defaultdict(dict, data.get("writes", {}))
         self.blobs = dict(data.get("blobs", {}))
+
+    def _quarantine_corrupt_file(self) -> None:
+        """Move a corrupt checkpoint aside; never unpickle it."""
+        from datetime import datetime, timezone
+
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        target = self._path.with_name(f"{self._path.name}.corrupt-{stamp}")
+        try:
+            os.replace(self._path, target)
+            self.quarantined_path = target
+        except OSError:
+            self.quarantined_path = self._path
+        self.storage = defaultdict(lambda: defaultdict(dict))
+        self.writes = defaultdict(dict)
+        self.blobs = {}
+        self.checkpoint_corrupt = True
 
     # -- write hooks ---------------------------------------------------------
     def put(

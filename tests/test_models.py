@@ -18,7 +18,7 @@ import numpy as np
 
 from pipeline.feature_engineering.features import add_derived_features, DERIVED_FEATURES
 from pipeline.modeling.models import get_model_factory
-from pipeline.modeling.train import stratified_train_val_test_split
+from pipeline.modeling.train import NUMERIC_COLUMNS, stratified_train_val_test_split
 
 
 def _base_df(n: int = 200, random_state: int = 42) -> pd.DataFrame:
@@ -144,6 +144,86 @@ def test_no_nan_in_predictions():
         proba = pipe.predict_proba(X_val)
         assert not np.isnan(proba).any(), f"{name} predict_proba contains NaN"
         assert not np.isinf(proba).any(), f"{name} predict_proba contains inf"
+
+
+def _production_split():
+    from pathlib import Path
+    from backend.predict_service import load_production_model
+
+    root = Path(__file__).resolve().parents[1]
+    raw = pd.read_csv(root / "data" / "creditflow_dataset.csv")
+    features, _ = add_derived_features(raw)
+    return raw, load_production_model(), stratified_train_val_test_split(features)
+
+
+def test_production_dataset_has_no_duplicate_or_overlapping_profiles():
+    from itertools import combinations
+    from pipeline.validation.schemas import CANONICAL_COLUMNS
+
+    raw, (_, meta), split = _production_split()
+    import hashlib
+    from pathlib import Path
+    dataset = Path(__file__).resolve().parents[1] / "data" / "creditflow_dataset.csv"
+    assert hashlib.sha256(dataset.read_bytes()).hexdigest() == meta["dataset_sha256"]
+    assert len(raw) == meta["rows"] == 5000
+    assert not raw.duplicated(CANONICAL_COLUMNS).any()
+    sets = [set(pd.util.hash_pandas_object(x[CANONICAL_COLUMNS], index=False)) for x in split[:3]]
+    assert [len(x) for x in sets] == [3500, 750, 750]
+    for a, b in combinations(sets, 2):
+        assert not a.intersection(b)
+
+
+def test_persisted_scaler_fitted_on_train_only():
+    _, (pipe, meta), split = _production_split()
+    train, val, test = split[:3]
+    scaler = pipe.named_steps["preprocessor"].named_transformers_["num"]
+    assert scaler.n_samples_seen_ == len(train) == 3500
+    np.testing.assert_allclose(scaler.mean_, train[meta["feature_order"]].mean(), rtol=1e-12)
+    np.testing.assert_allclose(scaler.var_, train[meta["feature_order"]].var(ddof=0), rtol=1e-12)
+    before = scaler.mean_.copy()
+    pipe.predict_proba(val)
+    pipe.predict_proba(test)
+    np.testing.assert_array_equal(before, scaler.mean_)
+    assert list(pipe.feature_names_in_) == meta["feature_order"]
+    assert "default" not in meta["feature_order"]
+
+
+def test_production_threshold_and_test_metrics_reproduce():
+    import json
+    from pathlib import Path
+    from pipeline.modeling.threshold import find_optimal_threshold
+    from pipeline.modeling.evaluate import compute_metrics, calculate_confusion_matrix
+
+    _, (pipe, meta), split = _production_split()
+    _, val, test, _, y_val, y_test = split
+    threshold = find_optimal_threshold(y_val, pipe.predict_proba(val)[:, 1])
+    assert threshold["best_threshold"] == meta["threshold"] == 0.20
+    assert threshold["best_cost"] == meta["business_cost"]
+    assert type(pipe.named_steps["model"]).__name__ == "LogisticRegression"
+    proba = pipe.predict_proba(test)[:, 1]
+    pred = (proba >= meta["threshold"]).astype(int)
+    metrics = compute_metrics(y_test, pred, proba)
+    for name, value in meta["test_metrics"].items():
+        assert round(float(metrics[name]), 4) == value
+    tn, fp, fn, tp = calculate_confusion_matrix(y_test, pred).ravel()
+    assert (tn, fp, fn, tp) == (558, 92, 30, 70)
+    root = Path(__file__).resolve().parents[1]
+    rows = json.loads((root / "models/production/benchmark_results.json").read_text())
+    winner = sorted(rows, key=lambda row: (row["business_cost"], -row["val_f1"]))[0]
+    assert winner["model"] == meta["model_name"]
+    assert winner["best_threshold"] == meta["threshold"]
+    reference = json.loads((root / "models/production/reference_stats.json").read_text())
+    assert reference["n_rows"] == 3500
+
+
+def test_model_bundle_metadata_matches_persisted_pipeline_contract():
+    """The manifest's immutable metadata must be exactly what serving consumes."""
+    from backend.predict_service import validate_model_bundle
+
+    meta = validate_model_bundle()
+    assert meta["feature_order"] == list(NUMERIC_COLUMNS)
+    assert meta["vnd_per_model_unit"] == 1000.0
+
 
 
 if __name__ == "__main__":

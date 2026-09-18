@@ -223,11 +223,18 @@ def _try_llm_explanation(ctx: dict[str, Any]) -> ExplanationOutput | None:
         return None
 
     classification = ctx.get("data_classification", "CONFIDENTIAL")
-    is_public_cloud = provider in ["cloudflare", "groq", "openai", "anthropic", "google"]
-    
-    if classification == "CONFIDENTIAL" and is_public_cloud:
+    # NOTE: "ollama"/"local*" are LOCAL backends (qwen2.5:3b on this machine) —
+    # never public cloud, so the Policy Guard must not block them.
+    is_public_cloud = provider in ("cloudflare", "groq", "openai", "anthropic", "google")
+    allow_external = os.environ.get("CREDITFLOW_ALLOW_EXTERNAL_LLM", "").strip() == "1"
+
+    if classification == "CONFIDENTIAL" and is_public_cloud and not allow_external:
         print(f"[Policy Guard] Blocked sending CONFIDENTIAL data to public cloud provider: {provider}")
         return None
+
+    if provider in ("ollama", "local", "local_ollama"):
+        from pipeline.agent.llm_provider import try_ollama_explain
+        return try_ollama_explain(ctx)
 
     if provider == "local_vllm":
         from pipeline.agent.llm_provider import try_local_vllm_explain

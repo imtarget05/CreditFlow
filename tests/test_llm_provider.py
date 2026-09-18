@@ -339,3 +339,82 @@ def test_provider_timeout_uses_template_without_changing_decision(monkeypatch):
     assert not output.get("_llm")
     assert state == original
     assert "decision" not in output and "risk_score" not in output
+
+
+# ---------------------------------------------------------------------------
+# VCR replay integration tests (ai-testing-beyond-mock).
+#
+# Real HTTP contracts for Cloudflare Workers AI + Groq, replayed from the
+# checked-in cassettes under tests/cassettes/. ``record_mode="once"`` replays
+# offline; a new interaction is recorded only when the cassette is missing AND
+# a real key is present. ``Authorization`` is filtered so secrets never persist.
+# These tests skip gracefully when vcrpy is absent or when there is neither a
+# cassette nor a real key. Monkeypatch unit tests above are untouched.
+# ---------------------------------------------------------------------------
+import os as _os
+from pathlib import Path as _Path
+
+try:  # vcrpy is a test-only dep; skip gracefully when absent.
+    import vcr as _vcr
+except ImportError:  # pragma: no cover
+    _vcr = None
+
+_CASSETTE_DIR = _Path(__file__).with_name("cassettes")
+
+
+def _replay_cassette(name):
+    assert _vcr is not None  # guarded by _require_vcr_and_contract
+    return _vcr.use_cassette(
+        str(_CASSETTE_DIR / name),
+        record_mode="once",
+        filter_headers=["authorization", "Authorization"],
+    )
+
+
+def _require_vcr_and_contract(cassette_name, real_key_env):
+    if _vcr is None:
+        pytest.skip("vcrpy not installed (see requirements-dev.txt)")
+    if not (_CASSETTE_DIR / cassette_name).exists() and not _os.environ.get(real_key_env):
+        pytest.skip(f"no cassette and no {real_key_env}; set key to record")
+
+
+def test_vcr_cloudflare_explain_replays_contract(monkeypatch):
+    _require_vcr_and_contract("cloudflare_explain.yaml", "CLOUDFLARE_API_TOKEN")
+    monkeypatch.setenv("CREDITFLOW_LLM_PROVIDER", "cloudflare")
+    if not _os.environ.get("CLOUDFLARE_API_TOKEN"):
+        monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "dummy-cassette-token")
+    if not _os.environ.get("CLOUDFLARE_ACCOUNT_ID"):
+        monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "test-replay")
+    if not _os.environ.get("CLOUDFLARE_MODEL"):
+        monkeypatch.setenv("CLOUDFLARE_MODEL", "@cf/test")
+
+    import pipeline.agent.llm_provider as provider
+
+    with _replay_cassette("cloudflare_explain.yaml"):
+        out = provider.try_cloudflare_explain({"risk_score": 0.9, "risk_level": "HIGH"})
+    assert out is not None
+    assert out["_llm"] is True
+    assert out["prompt_version"] == "credit-explain-v1"
+    assert out["llm_model"] == _os.environ["CLOUDFLARE_MODEL"]
+    assert out["summary"] and out["risk_factors"] and out["recommendation_note"]
+    assert out["confidence"] in ("low", "medium", "high")
+
+
+def test_vcr_groq_explain_replays_contract(monkeypatch):
+    _require_vcr_and_contract("groq_explain.yaml", "GROQ_API_KEY")
+    monkeypatch.setenv("CREDITFLOW_LLM_PROVIDER", "groq")
+    if not _os.environ.get("GROQ_API_KEY"):
+        monkeypatch.setenv("GROQ_API_KEY", "dummy-cassette-token")
+    if not _os.environ.get("GROQ_MODEL"):
+        monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-20b")
+
+    import pipeline.agent.llm_provider as provider
+
+    with _replay_cassette("groq_explain.yaml"):
+        out = provider.try_groq_explain({"risk_score": 0.9, "risk_level": "HIGH"})
+    assert out is not None
+    assert out["_llm"] is True
+    assert out["prompt_version"] == "credit-explain-v1"
+    assert out["llm_model"] == _os.environ["GROQ_MODEL"]
+    assert out["summary"] and out["risk_factors"] and out["recommendation_note"]
+    assert out["confidence"] in ("low", "medium", "high")

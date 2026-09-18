@@ -20,14 +20,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pipeline.agent.explanations import generate_explanation
 
 
-LOW_RISK = {"income": 5000, "age": 35, "employment_years": 10, "loan_amount": 20000, "loan_term": 36, "existing_debt": 3000, "credit_history": 8, "previous_defaults": 0}
+LOW_RISK = {"income": 5000000, "age": 35, "employment_years": 10, "loan_amount": 20000000, "loan_term": 36, "existing_debt": 3000000, "credit_history": 8, "previous_defaults": 0}
 
 def run_eval(profiles: list[dict]) -> dict:
     """Evaluate explanation quality across profiles (offline-safe).
 
-    Returns dict with keys: n, json_valid_rate, faithfulness, latency_ms_p50.
+    Returns dict with keys: n, json_valid_rate, faithfulness, latency_ms_p50,
+    guard_blocked_rate. ``guard_blocked_rate`` counts responses where the LLM
+    prose was refused by the explanation guard (ungrounded numbers / malformed /
+    provider failure) and the deterministic template was served instead.
     """
-    lat, valid, faith = [], 0, []
+    lat, valid, faith, blocked = [], 0, [], 0
     for p in profiles:
         t0 = time.perf_counter()
         expl = generate_explanation({
@@ -39,6 +42,8 @@ def run_eval(profiles: list[dict]) -> dict:
         lat.append((time.perf_counter() - t0) * 1000)
         if expl.get("summary") and isinstance(expl.get("risk_factors"), list):
             valid += 1
+        if expl.get("fallback_reason"):
+            blocked += 1
         rf = " ".join(expl.get("risk_factors", [])).lower()
         faith.append(1.0 if "debt-to-income" in rf or "nợ" in rf else 0.0)
     n = len(profiles)
@@ -47,6 +52,7 @@ def run_eval(profiles: list[dict]) -> dict:
         "json_valid_rate": round(valid / max(n, 1), 4),
         "faithfulness": round(sum(faith) / max(n, 1), 4),
         "latency_ms_p50": round(median(lat) if lat else 0, 2),
+        "guard_blocked_rate": round(blocked / max(n, 1), 4),
     }
 
 
@@ -73,9 +79,9 @@ def _log_eval_mlflow(out: dict) -> None:
 
 if __name__ == "__main__":
     profiles = [
-        {"income": 5000, "age": 35, "employment_years": 10, "loan_amount": 20000, "loan_term": 36, "existing_debt": 3000, "credit_history": 8, "previous_defaults": 0},
-        {"income": 2500, "age": 32, "employment_years": 4, "loan_amount": 12000, "loan_term": 36, "existing_debt": 1000, "credit_history": 5, "previous_defaults": 2},
-        {"income": 2500, "age": 32, "employment_years": 4, "loan_amount": 12000, "loan_term": 36, "existing_debt": 3500, "credit_history": 5, "previous_defaults": 0},
+        {"income": 5000000, "age": 35, "employment_years": 10, "loan_amount": 20000000, "loan_term": 36, "existing_debt": 3000000, "credit_history": 8, "previous_defaults": 0},
+        {"income": 2500000, "age": 32, "employment_years": 4, "loan_amount": 12000000, "loan_term": 36, "existing_debt": 1000000, "credit_history": 5, "previous_defaults": 2},
+        {"income": 2500000, "age": 32, "employment_years": 4, "loan_amount": 12000000, "loan_term": 36, "existing_debt": 3500000, "credit_history": 5, "previous_defaults": 0},
     ]
     out = run_eval(profiles)
     d = Path("models/evaluation")

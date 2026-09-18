@@ -171,3 +171,19 @@ implementation_plan.md
 # Editor / leftover backups
 *.bak
 *.bak.*
+
+# P1 artefact hygiene (runtime, never commit)
+*.pkl
+*.pkl.tmp-*
+*.db
+*.sqlite3
+*.tmp
+*.temp
+*.log
+tmp/
+temp/
+logs/
+.pytest_cache/
+data/*.db
+data/*.pkl
+data/*.tmp

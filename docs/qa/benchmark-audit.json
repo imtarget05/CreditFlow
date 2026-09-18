@@ -1,0 +1,285 @@
+{
+  "dataset": "synthetic 5,000 rows",
+  "dataset_sha256": "b65728f853cad72e3ce51a639ac96c7f04e935170e79acda637b4e5eec2f5d80",
+  "seed": 42,
+  "split_sizes": [
+    3500,
+    750,
+    750
+  ],
+  "environment": {
+    "python": "3.12.13",
+    "numpy": "2.5.3",
+    "pandas": "3.0.5",
+    "scikit-learn": "1.9.0",
+    "xgboost": "3.2.0",
+    "joblib": "1.6.0"
+  },
+  "cost_assumption": "5 * FN + 1 * FP; hypothetical units, not VND losses",
+  "confusion_matrix_order": "rows actual [0,1], columns predicted [0,1]",
+  "selection": "minimum validation cost, tie-break validation F1; test reporting only",
+  "selected_model": "logistic_regression",
+  "selected_threshold": 0.2,
+  "tolerance": "metrics match production benchmark after rounding to 4 decimals",
+  "checks": {
+    "duplicate_profiles": 0,
+    "cross_split_overlaps": 0,
+    "scaler_fit": "train only"
+  },
+  "models": [
+    {
+      "model": "logistic_regression",
+      "threshold": 0.2,
+      "validation_cost": 201.0,
+      "validation": {
+        "accuracy": 0.8386666666666667,
+        "precision": 0.4419889502762431,
+        "recall": 0.8,
+        "f1": 0.5693950177935944,
+        "roc_auc": 0.8817384615384616
+      },
+      "validation_confusion_matrix": [
+        [
+          549,
+          101
+        ],
+        [
+          20,
+          80
+        ]
+      ],
+      "config": {
+        "C": 1.0,
+        "class_weight": null,
+        "dual": false,
+        "fit_intercept": true,
+        "intercept_scaling": 1,
+        "l1_ratio": 0.0,
+        "max_iter": 1000,
+        "n_jobs": null,
+        "penalty": "deprecated",
+        "random_state": 42,
+        "solver": "lbfgs",
+        "tol": 0.0001,
+        "verbose": 0,
+        "warm_start": false
+      },
+      "test": {
+        "accuracy": 0.8373333333333334,
+        "precision": 0.43209876543209874,
+        "recall": 0.7,
+        "f1": 0.5343511450381679,
+        "roc_auc": 0.8671846153846154
+      },
+      "test_confusion_matrix": [
+        [
+          558,
+          92
+        ],
+        [
+          30,
+          70
+        ]
+      ],
+      "test_cost": 242
+    },
+    {
+      "model": "decision_tree",
+      "threshold": 0.05,
+      "validation_cost": 364.0,
+      "validation": {
+        "accuracy": 0.8133333333333334,
+        "precision": 0.34375,
+        "recall": 0.44,
+        "f1": 0.38596491228070173,
+        "roc_auc": 0.6553846153846153
+      },
+      "validation_confusion_matrix": [
+        [
+          566,
+          84
+        ],
+        [
+          56,
+          44
+        ]
+      ],
+      "config": {
+        "ccp_alpha": 0.0,
+        "class_weight": null,
+        "criterion": "gini",
+        "max_depth": null,
+        "max_features": null,
+        "max_leaf_nodes": null,
+        "min_impurity_decrease": 0.0,
+        "min_samples_leaf": 1,
+        "min_samples_split": 2,
+        "min_weight_fraction_leaf": 0.0,
+        "monotonic_cst": null,
+        "random_state": 42,
+        "splitter": "best"
+      },
+      "test": {
+        "accuracy": 0.84,
+        "precision": 0.4019607843137255,
+        "recall": 0.41,
+        "f1": 0.40594059405940597,
+        "roc_auc": 0.6580769230769231
+      },
+      "test_confusion_matrix": [
+        [
+          589,
+          61
+        ],
+        [
+          59,
+          41
+        ]
+      ],
+      "test_cost": 356
+    },
+    {
+      "model": "random_forest",
+      "threshold": 0.25,
+      "validation_cost": 233.0,
+      "validation": {
+        "accuracy": 0.844,
+        "precision": 0.44654088050314467,
+        "recall": 0.71,
+        "f1": 0.5482625482625483,
+        "roc_auc": 0.8573615384615383
+      },
+      "validation_confusion_matrix": [
+        [
+          562,
+          88
+        ],
+        [
+          29,
+          71
+        ]
+      ],
+      "config": {
+        "bootstrap": true,
+        "ccp_alpha": 0.0,
+        "class_weight": null,
+        "criterion": "gini",
+        "max_depth": null,
+        "max_features": "sqrt",
+        "max_leaf_nodes": null,
+        "max_samples": null,
+        "min_impurity_decrease": 0.0,
+        "min_samples_leaf": 1,
+        "min_samples_split": 2,
+        "min_weight_fraction_leaf": 0.0,
+        "monotonic_cst": null,
+        "n_estimators": 300,
+        "n_jobs": null,
+        "oob_score": false,
+        "random_state": 42,
+        "verbose": 0,
+        "warm_start": false
+      },
+      "test": {
+        "accuracy": 0.848,
+        "precision": 0.4492753623188406,
+        "recall": 0.62,
+        "f1": 0.5210084033613446,
+        "roc_auc": 0.8479076923076924
+      },
+      "test_confusion_matrix": [
+        [
+          574,
+          76
+        ],
+        [
+          38,
+          62
+        ]
+      ],
+      "test_cost": 266
+    },
+    {
+      "model": "xgboost",
+      "threshold": 0.05,
+      "validation_cost": 293.0,
+      "validation": {
+        "accuracy": 0.764,
+        "precision": 0.3242009132420091,
+        "recall": 0.71,
+        "f1": 0.445141065830721,
+        "roc_auc": 0.8392923076923077
+      },
+      "validation_confusion_matrix": [
+        [
+          502,
+          148
+        ],
+        [
+          29,
+          71
+        ]
+      ],
+      "config": {
+        "objective": "binary:logistic",
+        "base_score": null,
+        "booster": null,
+        "callbacks": null,
+        "colsample_bylevel": null,
+        "colsample_bynode": null,
+        "colsample_bytree": null,
+        "device": null,
+        "early_stopping_rounds": null,
+        "enable_categorical": false,
+        "eval_metric": "logloss",
+        "feature_types": null,
+        "feature_weights": null,
+        "gamma": null,
+        "grow_policy": null,
+        "importance_type": null,
+        "interaction_constraints": null,
+        "learning_rate": null,
+        "max_bin": null,
+        "max_cat_threshold": null,
+        "max_cat_to_onehot": null,
+        "max_delta_step": null,
+        "max_depth": null,
+        "max_leaves": null,
+        "min_child_weight": null,
+        "missing": NaN,
+        "monotone_constraints": null,
+        "multi_strategy": null,
+        "n_estimators": null,
+        "n_jobs": null,
+        "num_parallel_tree": null,
+        "random_state": 42,
+        "reg_alpha": null,
+        "reg_lambda": null,
+        "sampling_method": null,
+        "scale_pos_weight": null,
+        "subsample": null,
+        "tree_method": null,
+        "validate_parameters": null,
+        "verbosity": null
+      },
+      "test": {
+        "accuracy": 0.7813333333333333,
+        "precision": 0.34,
+        "recall": 0.68,
+        "f1": 0.4533333333333333,
+        "roc_auc": 0.8234153846153847
+      },
+      "test_confusion_matrix": [
+        [
+          518,
+          132
+        ],
+        [
+          32,
+          68
+        ]
+      ],
+      "test_cost": 292
+    }
+  ]
+}

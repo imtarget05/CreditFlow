@@ -23,7 +23,7 @@ from pipeline.agent.state import CreditState
 # Scores are clipped so the aggregate never exceeds 1.0.
 FRAUD_RULES: list[tuple[str, str, float]] = [
     ("rapid_application_sequence", "Multiple applications submitted within minutes", 0.30),
-    ("income_exceeds_loan_by_unusual_ratio", "Stated income is implausibly high relative to loan", 0.25),
+    ("income_exceeds_loan_by_unusual_ratio", "Loan amount exceeds stated income by over 500x — implausible funding request", 0.25),
     ("zero_credit_history", "Applicant has zero credit history yet requests large loan", 0.35),
     ("employment_zero_with_large_loan", "Unemployed applicant requesting a large loan", 0.40),
     ("debt_burden_extreme", "Existing debt exceeds 5× monthly income", 0.30),
@@ -42,6 +42,12 @@ def compute_fraud_flags(data: dict[str, Any]) -> list[str]:
     existing_debt = float(data.get("existing_debt", 0))
     credit_history = float(data.get("credit_history", 0))
     employment_years = float(data.get("employment_years", 0))
+
+    # Money fields follow the single VND contract (pipeline/validation/schemas.py)
+    # and are used as-is. There is deliberately NO magnitude heuristic here: a
+    # "if small, multiply by 1000" guess would silently change business rules by
+    # an order of magnitude. Out-of-contract payloads are rejected upstream by
+    # validate_money_unit_contract (API 422 / workflow REJECT).
 
     # rapid_application_sequence — caller-supplied meta flag (UI may set it)
     if data.get("_rapid_sequence"):
@@ -62,10 +68,6 @@ def compute_fraud_flags(data: dict[str, Any]) -> list[str]:
     # debt_burden_extreme
     if income > 0 and (existing_debt / income) > 5.0:
         flags.append("debt_burden_extreme")
-
-    # loan_amount_suspiciously_round
-    if loan_amount > 0 and loan_amount % 10_000_000 == 0 and loan_amount >= 10_000_000:
-        flags.append("loan_amount_suspiciously_round")
 
     return flags
 

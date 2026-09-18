@@ -15,6 +15,10 @@ Groq (OpenAI-compatible chat completions, verified live 2026-09-17):
     GROQ_API_KEY
     GROQ_MODEL (default openai/gpt-oss-20b)
 
+Policy guard (privacy): state classified CONFIDENTIAL (the default) is blocked from all
+public-cloud providers; set CREDITFLOW_ALLOW_EXTERNAL_LLM=1 to opt in consciously (used
+for the synthetic-data demo).
+
 Whatever a provider returns is still passed through the explanation guard in
 ``pipeline/agent/explanations.py`` (contract-field whitelist + numeric grounding)
 before it can reach graph state, so a bad completion cannot change a decision.
@@ -34,6 +38,13 @@ DEFAULT_MODEL = "@cf/meta/llama-3.2-1b-instruct"
 # "@cf/meta/llama-3.1-8b-instruct". Owner can set CLOUDFLARE_MODEL to it.
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
+
+# Local Ollama (M1 Pro 16GB, personal, offline-safe): qwen2.5:3b is the default
+# local model. Ollama counts as LOCAL, not public cloud, so the Policy Guard in
+# explanations.py never blocks it. Cloud (cloudflare/groq/openai) is optional.
+OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
+DEFAULT_OLLAMA_MODEL = "qwen2.5:3b"
+OLLAMA_TIMEOUT = 30.0
 
 
 class LLMUnavailable(Exception):
@@ -206,6 +217,44 @@ def try_groq_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
     except Exception:
         return None
     return _normalize_explanation(data, cfg["model"])
+
+def try_ollama_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
+    """Attempt a structured explanation via local Ollama. ``None`` = fall back.
+
+    Enabled only when ``CREDITFLOW_LLM_PROVIDER=ollama`` (aliases: local,
+    local_ollama); otherwise returns ``None`` immediately. On failure returns
+    ``None`` so the caller falls back to template — it does not auto-chain
+    to cloud. Local-only, so CONFIDENTIAL data is never sent to a public
+    cloud. Default model qwen2.5:3b (override with ``OLLAMA_MODEL``).
+    """
+    provider = os.environ.get("CREDITFLOW_LLM_PROVIDER", "").lower().strip()
+    if provider not in ("ollama", "local", "local_ollama"):
+        return None
+    model = os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL).strip() or DEFAULT_OLLAMA_MODEL
+    url = os.environ.get("OLLAMA_BASE_URL", OLLAMA_CHAT_URL).strip() or OLLAMA_CHAT_URL
+    try:
+        r = httpx.post(
+            url,
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": _compact_prompt(ctx)}],
+                "format": "json",
+                "stream": False,
+                "options": {"temperature": 0.1, "num_predict": 300},
+            },
+            timeout=OLLAMA_TIMEOUT,
+        )
+    except Exception:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        content = (r.json().get("message") or {}).get("content", "") or ""
+        data = _balanced_json(content)
+    except Exception:
+        return None
+    return _normalize_explanation(data, model)
+
 
 def try_local_vllm_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
     """Attempt a structured explanation via local vLLM. ``None`` = fall back.

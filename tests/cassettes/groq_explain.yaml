@@ -1,0 +1,17 @@
+# VCR cassette for test_vcr_groq_explain_replays_contract.
+# Recorded contract for POST https://api.groq.com/openai/v1/chat/completions.
+# record_mode=once: replayed offline; Authorization is filtered, never stored.
+interactions:
+- request:
+    body: null
+    headers:
+      Content-Type: ['application/json']
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    body:
+      string: '{"id": "chatcmpl-cassette", "object": "chat.completion", "model": "openai/gpt-oss-20b", "choices": [{"message": {"content": "{\"summary\": \"Rui ro cao: DTI vuot nguong chap nhan.\", \"risk_factors\": [\"DTI 1.875 vuot nguong\", \"Khoan vay lon so voi thu nhap\"], \"recommendation_note\": \"Kiem tra nguon tra no cho ky han con lai.\", \"confidence\": \"high\"}"}}]}'
+    headers:
+      Content-Type: ['application/json']
+    status: {code: 200, message: OK}
+recorded_with: vcrpy

@@ -16,9 +16,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from contextlib import ExitStack
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from backend.app import app, metrics
+
+# NOTE: module is fast (/predict in ms). The 2-min slowness lives in
+# test_agent.py graph-endpoint tests — those carry the `slow` marker
+# individually (see bottom of test_agent.py), NOT via a module pytestmark.
+# CI fast job runs `-m "not integration and not slow"`.
 
 # Keep the app lifespan (model load) open for the whole test module.
 _stack = ExitStack()
@@ -94,6 +101,19 @@ def test_predict_negative_income_422():
     payload = dict(VALID, income=-500)
     r = client.post("/predict", json=payload)
     assert r.status_code == 422
+
+
+def test_predict_training_scale_money_422_with_clear_message():
+    """A profile sent in the wrong unit is refused, not rescaled by magnitude."""
+    payload = dict(VALID, income=8000, loan_amount=120000, existing_debt=15000)
+    r = client.post("/predict", json=payload)
+    assert r.status_code == 422
+    detail = str(r.json()["detail"])
+    assert "income" in detail and "loan_amount" in detail
+    assert "VND" in detail
+    assert "training-scale" in detail
+    # The floor is published in the message so the caller can correct the unit.
+    assert "1,000,000" in detail
 
 
 def test_predict_age_boundary_ok():

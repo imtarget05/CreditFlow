@@ -18,13 +18,18 @@ Schema (acceptance contract):
         contract_code(HDTD-YYYYMMDD-XXXX), loan_amount, disbursed_at,
         status(COMPLETED), ledger_hash
 
-``ledger_hash`` is a SHA-256 over the immutable disbursement fields — any
-manual edit of the row breaks the hash, giving tamper evidence for the
-disbursement ledger. Demo scope: single-file SQLite, stdlib only.
+``ledger_hash`` is a SHA-256 over the four hashed disbursement fields
+(application_id, contract_code, loan_amount, disbursed_at). It is **tamper
+evidence, not immutability**: SQLite rows can still be edited or deleted by
+anyone with file access, but recomputing the digest (``verify_disbursement_hash``
+— surfaced as ``hash_valid`` by ``list_disbursements`` / ``GET /disbursements``)
+detects an edit of any hashed field. ``status`` and ``id`` are outside the digest.
+Demo scope: single-file SQLite, stdlib only.
 """
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import sqlite3
@@ -89,6 +94,7 @@ def init_db(db_path: Path | None = None) -> None:
             CREATE TABLE IF NOT EXISTS loan_applications (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 thread_id     TEXT NOT NULL UNIQUE,
+                application_id TEXT,
                 customer_data TEXT NOT NULL,           -- JSON blob
                 risk_score    REAL,
                 risk_level    TEXT,
@@ -96,24 +102,42 @@ def init_db(db_path: Path | None = None) -> None:
                 status        TEXT NOT NULL CHECK (
                     status IN ('PENDING_REVIEW', 'APPROVED', 'REJECTED')
                 ),
+                audit_trail   TEXT,                    -- JSON blob
                 created_at    TEXT NOT NULL,
                 updated_at    TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS disbursements (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                application_id INTEGER NOT NULL REFERENCES loan_applications(id),
+                application_id INTEGER NOT NULL UNIQUE REFERENCES loan_applications(id),
                 contract_code TEXT NOT NULL UNIQUE,
                 loan_amount   REAL NOT NULL,
                 disbursed_at  TEXT NOT NULL,
                 status        TEXT NOT NULL CHECK (status = 'COMPLETED'),
-                ledger_hash   TEXT NOT NULL
+                ledger_hash   TEXT NOT NULL,
+                idempotency_key TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS inference_logs (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at        TEXT NOT NULL,
+                income            REAL,
+                loan_amount       REAL,
+                existing_debt     REAL,
+                age               INTEGER,
+                employment_years  REAL,
+                loan_term         INTEGER,
+                credit_history    REAL,
+                previous_defaults INTEGER,
+                risk_probability  REAL
             );
 
             CREATE INDEX IF NOT EXISTS idx_applications_status
                 ON loan_applications(status);
             CREATE INDEX IF NOT EXISTS idx_disbursements_application
                 ON disbursements(application_id);
+            CREATE INDEX IF NOT EXISTS idx_inference_logs_id
+                ON inference_logs(id DESC);
 
             CREATE TABLE IF NOT EXISTS idempotency_keys (
                 caller_scope TEXT NOT NULL,
@@ -136,6 +160,25 @@ def init_db(db_path: Path | None = None) -> None:
             );
             """
         )
+        try:
+            conn.execute("ALTER TABLE loan_applications ADD COLUMN application_id TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE loan_applications ADD COLUMN audit_trail TEXT")
+        except sqlite3.OperationalError:
+            pass
+        for _ddl in (
+            "ALTER TABLE loan_applications ADD COLUMN approver_id TEXT",
+            "ALTER TABLE loan_applications ADD COLUMN idempotency_key TEXT",
+            "ALTER TABLE disbursements ADD COLUMN idempotency_key TEXT",
+        ):
+            try:
+                conn.execute(_ddl)
+            except sqlite3.OperationalError:
+                pass
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_disb_app_uid ON disbursements(application_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_applications_app_id ON loan_applications(application_id)")
 
 
 _PG_DURABLE_DDL = """
@@ -279,6 +322,11 @@ def _to_row(row: sqlite3.Row | None) -> dict | None:
             data["customer_data"] = json.loads(data.get("customer_data") or "{}")
         except (TypeError, json.JSONDecodeError):
             pass
+    if "audit_trail" in data and isinstance(data["audit_trail"], str):
+        try:
+            data["audit_trail"] = json.loads(data["audit_trail"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            pass
     return data
 
 
@@ -292,6 +340,8 @@ def record_application(
     risk_level: str,
     decision: str,
     status: str,
+    application_id: str | None = None,
+    audit_trail: list | None = None,
     db_path: Path | None = None,
 ) -> int:
     """Insert (or refresh) the durable application row for a workflow run.
@@ -300,22 +350,25 @@ def record_application(
     """
     now = _now_iso()
     blob = json.dumps(customer_data, ensure_ascii=False)
+    trail_blob = json.dumps(audit_trail or [], ensure_ascii=False)
     with _write_lock, _connect(db_path) as conn:
         conn.execute(
             """
             INSERT INTO loan_applications
-                (thread_id, customer_data, risk_score, risk_level, decision,
-                 status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (thread_id, application_id, customer_data, risk_score, risk_level, decision,
+                 status, audit_trail, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(thread_id) DO UPDATE SET
-                customer_data = excluded.customer_data,
-                risk_score    = excluded.risk_score,
-                risk_level    = excluded.risk_level,
-                decision      = excluded.decision,
-                status        = excluded.status,
-                updated_at    = excluded.updated_at
+                application_id = COALESCE(excluded.application_id, loan_applications.application_id),
+                customer_data  = excluded.customer_data,
+                risk_score     = excluded.risk_score,
+                risk_level     = excluded.risk_level,
+                decision       = excluded.decision,
+                status         = excluded.status,
+                audit_trail    = excluded.audit_trail,
+                updated_at     = excluded.updated_at
             """,
-            (thread_id, blob, float(risk_score), risk_level, decision, status, now, now),
+            (thread_id, application_id, blob, float(risk_score), risk_level, decision, status, trail_blob, now, now),
         )
         row = conn.execute(
             "SELECT id FROM loan_applications WHERE thread_id = ?", (thread_id,)
@@ -338,6 +391,7 @@ def update_application_status(
     thread_id: str,
     status: str,
     decision: str | None = None,
+    audit_trail: list | None = None,
     db_path: Path | None = None,
 ) -> bool:
     """Update the lifecycle status of the application for a thread_id.
@@ -346,23 +400,105 @@ def update_application_status(
     (e.g. the server restarted before persistence existed).
     """
     now = _now_iso()
+    trail_blob = json.dumps(audit_trail or [], ensure_ascii=False) if audit_trail is not None else None
     with _write_lock, _connect(db_path) as conn:
-        if decision is None:
+        if decision is None and trail_blob is None:
             cur = conn.execute(
                 "UPDATE loan_applications SET status = ?, updated_at = ? "
                 "WHERE thread_id = ?",
                 (status, now, thread_id),
             )
-        else:
+        elif decision is not None and trail_blob is not None:
+            cur = conn.execute(
+                "UPDATE loan_applications SET status = ?, decision = ?, audit_trail = ?, updated_at = ? "
+                "WHERE thread_id = ?",
+                (status, decision, trail_blob, now, thread_id),
+            )
+        elif decision is not None:
             cur = conn.execute(
                 "UPDATE loan_applications SET status = ?, decision = ?, updated_at = ? "
                 "WHERE thread_id = ?",
                 (status, decision, now, thread_id),
             )
+        else:
+            cur = conn.execute(
+                "UPDATE loan_applications SET status = ?, audit_trail = ?, updated_at = ? "
+                "WHERE thread_id = ?",
+                (status, trail_blob, now, thread_id),
+            )
         return cur.rowcount > 0
 
 
-# ---------------------------------------------------------------------------
+def get_audit_trail_record(
+    app_or_thread_id: str, db_path: Path | None = None
+) -> dict | None:
+    """Fetch audit trail for an application_id or thread_id in O(1)."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT id, thread_id, application_id, decision, status, audit_trail
+            FROM loan_applications
+            WHERE application_id = ? OR thread_id = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (app_or_thread_id, app_or_thread_id),
+        ).fetchone()
+    if row is None:
+        return None
+    res = dict(row)
+    if res.get("audit_trail"):
+        try:
+            res["audit_trail"] = json.loads(res["audit_trail"])
+        except (TypeError, json.JSONDecodeError):
+            res["audit_trail"] = []
+    else:
+        res["audit_trail"] = []
+    return res
+
+
+def record_inference(
+    record: dict, db_path: Path | None = None
+) -> None:
+    """Store an inference sample for drift monitoring."""
+    now = _now_iso()
+    with _write_lock, _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO inference_logs
+                (created_at, income, loan_amount, existing_debt, age,
+                 employment_years, loan_term, credit_history, previous_defaults,
+                 risk_probability)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                now,
+                float(record.get("income", 0)),
+                float(record.get("loan_amount", 0)),
+                float(record.get("existing_debt", 0)),
+                int(record.get("age", 0)),
+                float(record.get("employment_years", 0)),
+                int(record.get("loan_term", 0)),
+                float(record.get("credit_history", 0)),
+                int(record.get("previous_defaults", 0)),
+                float(record.get("risk_probability", 0.0)),
+            ),
+        )
+
+
+def list_recent_inferences(limit: int = 500, db_path: Path | None = None) -> list[dict]:
+    """Return recent inference logs for drift monitoring."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT income, loan_amount, existing_debt, age,
+                   employment_years, loan_term, credit_history, previous_defaults,
+                   risk_probability
+            FROM inference_logs
+            ORDER BY id DESC LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in reversed(rows)]
 # disbursements — the actual general-ledger entry for money movement
 # ---------------------------------------------------------------------------
 def _next_contract_code(conn: sqlite3.Connection) -> str:
@@ -380,20 +516,46 @@ def _next_contract_code(conn: sqlite3.Connection) -> str:
 def _ledger_hash(
     application_id: int, contract_code: str, loan_amount: float, disbursed_at: str
 ) -> str:
-    """SHA-256 over the immutable disbursement fields (tamper evidence)."""
+    """SHA-256 over the four hashed disbursement fields (tamper evidence)."""
     payload = f"{application_id}|{contract_code}|{loan_amount:.2f}|{disbursed_at}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def verify_disbursement_hash(record: dict) -> bool:
+    """Recompute the ledger digest of a disbursement row and compare.
+
+    Returns True when the stored ``ledger_hash`` still matches the four hashed
+    fields — i.e. the row has not been edited. Returns False when it was edited
+    (or the digest is missing/malformed). This is the mechanism behind every
+    "tamper-evident" claim: without it a hash is only a stored string.
+    """
+    if not record or not record.get("ledger_hash"):
+        return False
+    try:
+        expected = _ledger_hash(
+            int(record["application_id"]),
+            str(record["contract_code"]),
+            float(record["loan_amount"]),
+            str(record["disbursed_at"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+    return hmac.compare_digest(str(record["ledger_hash"]), expected)
 
 
 def record_disbursement(
     application_id: int,
     loan_amount: float,
     db_path: Path | None = None,
+    idempotency_key: str | None = None,
 ) -> dict:
     """Write a completed disbursement (contract + ledger entry) for a loan.
 
     ``application_id`` is the ``loan_applications.id``. Raises ``ValueError``
     if the application row does not exist (no orphan money movement).
+    The ``UNIQUE(application_id)`` constraint guarantees replay safety:
+    a second approval for the same application returns the existing row
+    instead of writing duplicate money movement.
     """
     disbursed_at = _now_iso()
     with _write_lock, _connect(db_path) as conn:
@@ -404,24 +566,47 @@ def record_disbursement(
             raise ValueError(
                 f"cannot disburse: loan application {application_id} not found"
             )
+        # Replay-safe: same application -> same row, no duplicate money.
+        if idempotency_key:
+            row = conn.execute(
+                "SELECT * FROM disbursements WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+            if row is not None:
+                return _to_row(row)
+        row = conn.execute(
+            "SELECT * FROM disbursements WHERE application_id = ?",
+            (application_id,),
+        ).fetchone()
+        if row is not None:
+            return _to_row(row)
         contract_code = _next_contract_code(conn)
         digest = _ledger_hash(application_id, contract_code, loan_amount, disbursed_at)
-        cur = conn.execute(
-            """
-            INSERT INTO disbursements
-                (application_id, contract_code, loan_amount, disbursed_at,
-                 status, ledger_hash)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                application_id,
-                contract_code,
-                float(loan_amount),
-                disbursed_at,
-                DISBURSEMENT_COMPLETED,
-                digest,
-            ),
-        )
+        try:
+            cur = conn.execute(
+                """
+                INSERT INTO disbursements
+                    (application_id, contract_code, loan_amount, disbursed_at,
+                     status, ledger_hash, idempotency_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    application_id,
+                    contract_code,
+                    float(loan_amount),
+                    disbursed_at,
+                    DISBURSEMENT_COMPLETED,
+                    digest,
+                    idempotency_key,
+                ),
+            )
+        except sqlite3.IntegrityError:
+            # Lost a concurrent race: the winner's row is the single truth.
+            row = conn.execute(
+                "SELECT * FROM disbursements WHERE application_id = ?",
+                (application_id,),
+            ).fetchone()
+            return _to_row(row)
         return {
             "id": int(cur.lastrowid),
             "application_id": application_id,
@@ -430,7 +615,48 @@ def record_disbursement(
             "disbursed_at": disbursed_at,
             "status": DISBURSEMENT_COMPLETED,
             "ledger_hash": digest,
+            "idempotency_key": idempotency_key,
         }
+
+
+def approve_pending_application(
+    thread_id: str,
+    approver_id: str,
+    idempotency_key: str,
+    db_path: Path | None = None,
+) -> dict:
+    """Reserve a PENDING_REVIEW application for approval (one transaction).
+
+    Atomically transitions ``PENDING_REVIEW -> APPROVED`` only when the row
+    is still pending and records approver identity + idempotency key.
+    Returns ``{"application_id": int, "replay": bool}`` where ``replay``
+    is True when the same idempotency key was already recorded.
+    Raises ``LookupError`` for unknown/non-pending threads and
+    ``ValueError`` when a *different* key retries an approved application.
+    """
+    if not approver_id or not idempotency_key:
+        raise ValueError("approver_id and idempotency_key are required")
+    now = _now_iso()
+    with _write_lock, _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM loan_applications WHERE thread_id = ?", (thread_id,)
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"unknown application thread {thread_id}")
+        data = dict(row)
+        if data.get("idempotency_key") == idempotency_key and data.get("status") == STATUS_APPROVED:
+            return {"application_id": int(data["id"]), "replay": True}
+        if data.get("status") != STATUS_PENDING_REVIEW:
+            raise LookupError(f"application {thread_id} is not pending review")
+        cur = conn.execute(
+            "UPDATE loan_applications SET status = ?, approver_id = ?, "
+            "idempotency_key = ?, updated_at = ? "
+            "WHERE thread_id = ? AND status = ?",
+            (STATUS_APPROVED, approver_id, idempotency_key, now, thread_id, STATUS_PENDING_REVIEW),
+        )
+        if cur.rowcount == 0:
+            raise LookupError(f"application {thread_id} is not pending review")
+        return {"application_id": int(data["id"]), "replay": False}
 
 
 # ---------------------------------------------------------------------------
@@ -454,9 +680,19 @@ def list_applications(
 
 
 def list_disbursements(db_path: Path | None = None) -> list[dict]:
-    """List the actual disbursement ledger, newest first."""
+    """List the actual disbursement ledger, newest first.
+
+    Every row carries ``hash_valid``: the stored SHA-256 recomputed from the
+    hashed fields. ``hash_valid: false`` means the row was edited after being
+    written (tamper evidence).
+    """
     with _connect(db_path) as conn:
         rows = conn.execute(
             "SELECT * FROM disbursements ORDER BY id DESC"
         ).fetchall()
-    return [_to_row(r) for r in rows]
+    out: list[dict] = []
+    for r in rows:
+        row = _to_row(r)
+        row["hash_valid"] = verify_disbursement_hash(row)
+        out.append(row)
+    return out

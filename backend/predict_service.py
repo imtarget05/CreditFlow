@@ -3,17 +3,32 @@
 Wraps the production model so the HTTP layer stays thin. Loads the persisted
 Pipeline (preprocessor + model), runs validation + feature engineering, then
 returns risk_probability / risk_level / decision / model_version + reasons.
+
+Money-unit contract (see pipeline/validation/schemas.py — do NOT re-derive):
+  * the API/UI contract is **VND** for income / loan_amount / existing_debt;
+  * the training artifact is in **nghìn VND**;
+  * the divisor is read from ``meta["vnd_per_model_unit"]`` (written by
+    scripts/train_models.py), never hardcoded here;
+  * payloads that cannot be VND (values below the contract floor) are rejected
+    with a clear error instead of being rescaled by a magnitude guess.
 """
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import joblib
 import pandas as pd
+import sklearn
 
-from pipeline.validation.schemas import validate_dataframe
+from pipeline.validation.schemas import (
+    MONEY_COLUMNS,
+    validate_dataframe,
+    validate_money_unit_contract,
+)
 from pipeline.feature_engineering.features import add_derived_features
+from pipeline.modeling.train import NUMERIC_COLUMNS
 from pipeline.modeling.threshold import (
     business_decision,
     DEFAULT_APPROVE_MAX,
@@ -23,40 +38,144 @@ from pipeline.modeling.threshold import (
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_FILE = ROOT / "models" / "production" / "pipeline.joblib"
 META_FILE = ROOT / "models" / "production" / "meta.json"
+MANIFEST_FILE = ROOT / "models" / "production" / "manifest.json"
 
-VND_PER_MODEL_UNIT = 1000.0
-"""Contract VND -> training-scale divisor (scale-alignment, NOT an FX rate).
-
-API contract, UI và data dictionary đều nói VND. Artifact production lại train
-trên synthetic data thang ~10^3 (income mean 2664). Chia 3 trường tiền cho 1000
-đưa 1.5–20M VND về 1500–20000 units ≈ dải training (min–max), đồng thời giữ
-nguyên mọi tỉ số (DTI/LTI/debt-to-loan) vì tử và mẫu cùng chia một số.
-"""
-
-
-def to_model_units(features: dict) -> dict:
-    """Map contract-VND money fields into the model's training scale.
-
-    Chỉ chạm income/loan_amount/existing_debt; 5 trường còn lại giữ nguyên.
-    Không validate ở đây — validation đã chạy trước trên giá trị VND gốc.
-    """
-    out = dict(features)
-    for key in ("income", "loan_amount", "existing_debt"):
-        out[key] = float(features[key]) / VND_PER_MODEL_UNIT
-    return out
+REQUIRED_METADATA_FIELDS = frozenset({
+    "model_name",
+    "version",
+    "trained_at",
+    "threshold",
+    "feature_order",
+    "money_unit",
+    "training_money_unit",
+    "vnd_per_model_unit",
+    "sklearn_version",
+})
+REQUIRED_ARTIFACTS = frozenset({
+    "pipeline.joblib",
+    "meta.json",
+    "reference_stats.json",
+    "benchmark_results.csv",
+    "benchmark_results.json",
+})
 
 
 class ModelUnavailableError(RuntimeError):
     """Raised when the production model cannot be loaded."""
 
 
-def load_production_model():
-    if not MODEL_FILE.exists():
-        raise ModelUnavailableError(
-            f"Production model not found at {MODEL_FILE}. Run `python scripts/train_models.py` first."
+class ArtifactContractError(RuntimeError):
+    """Raised when the artifact does not declare a serving contract field."""
+
+
+class UnitContractViolation(ValueError):
+    """Raised when money inputs violate the VND unit contract."""
+
+
+def _major_minor(version: str) -> tuple[str, str]:
+    parts = str(version).split(".")
+    if len(parts) < 2 or not all(part.isdigit() for part in parts[:2]):
+        raise ArtifactContractError(f"invalid scikit-learn version: {version!r}")
+    return parts[0], parts[1]
+
+
+def validate_model_bundle(bundle_dir: Path | None = None) -> dict:
+    """Validate all files required to serve one immutable model bundle."""
+    bundle_dir = Path(bundle_dir or MODEL_FILE.parent)
+    manifest_path = bundle_dir / "manifest.json"
+    meta_path = bundle_dir / "meta.json"
+    try:
+        manifest = json.loads(manifest_path.read_text())
+        meta = json.loads(meta_path.read_text())
+    except (OSError, ValueError) as exc:
+        raise ArtifactContractError(f"invalid model bundle metadata: {exc}") from exc
+
+    if manifest.get("bundle_version") != 1:
+        raise ArtifactContractError("unsupported or missing bundle_version")
+    if manifest.get("metadata") != meta:
+        raise ArtifactContractError("manifest metadata does not match meta.json")
+
+    missing = sorted(REQUIRED_METADATA_FIELDS.difference(meta))
+    if missing:
+        raise ArtifactContractError(f"meta.json missing required fields: {', '.join(missing)}")
+    if not isinstance(meta["feature_order"], list) or not meta["feature_order"]:
+        raise ArtifactContractError("meta.json feature_order must be a non-empty list")
+    if meta["feature_order"] != list(NUMERIC_COLUMNS):
+        raise ArtifactContractError("meta.json feature_order does not match the serving schema")
+    money_scale(meta)
+
+    artifact_hashes = manifest.get("artifacts")
+    if not isinstance(artifact_hashes, dict) or not artifact_hashes:
+        raise ArtifactContractError("manifest artifacts must be a non-empty mapping")
+    missing_artifacts = sorted(REQUIRED_ARTIFACTS.difference(artifact_hashes))
+    if missing_artifacts:
+        raise ArtifactContractError(
+            f"manifest missing required artifacts: {', '.join(missing_artifacts)}"
         )
-    pipe = joblib.load(MODEL_FILE)
-    meta = json.loads(META_FILE.read_text()) if META_FILE.exists() else {"version": "unknown"}
+    import hashlib
+    for filename, expected_hash in artifact_hashes.items():
+        path = bundle_dir / filename
+        if not isinstance(filename, str) or Path(filename).name != filename:
+            raise ArtifactContractError(f"invalid artifact filename: {filename!r}")
+        try:
+            actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise ArtifactContractError(f"required artifact missing: {filename}") from exc
+        if actual_hash != expected_hash:
+            raise ArtifactContractError(f"artifact SHA-256 mismatch: {filename}")
+
+    if _major_minor(meta["sklearn_version"]) != _major_minor(sklearn.__version__):
+        raise ArtifactContractError(
+            "scikit-learn major/minor mismatch: "
+            f"bundle={meta['sklearn_version']}, runtime={sklearn.__version__}"
+        )
+    return meta
+
+
+def money_scale(meta: dict) -> float:
+    """Money divisor declared by the training artifact (VND -> training units)."""
+    try:
+        scale = float(meta["vnd_per_model_unit"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ArtifactContractError(
+            "meta.json has no 'vnd_per_model_unit' — retrain "
+            "(`python scripts/train_models.py`) so the artifact declares its "
+            "money-unit contract; serving refuses to guess the scale."
+        ) from exc
+    if not math.isfinite(scale) or scale <= 0:
+        raise ArtifactContractError(f"invalid vnd_per_model_unit: {scale}")
+    return scale
+
+
+def to_model_units(features: dict, meta: dict) -> dict:
+    """Map contract-VND money fields into the model's training scale.
+
+    Enforces the unit contract first: values that cannot be VND raise
+    ``UnitContractViolation`` (a ``ValueError``) so the API answers 422 with a
+    clear message instead of silently scoring a mis-scaled profile.
+    Only income/loan_amount/existing_debt are touched; the other 5 fields and
+    every ratio (DTI/LTI/debt-to-loan) are scale-invariant under this divisor.
+    """
+    violations = validate_money_unit_contract(features)
+    if violations:
+        raise UnitContractViolation("unit_contract_violation: " + "; ".join(violations))
+
+    scale = money_scale(meta)
+    out = dict(features)
+    for key in MONEY_COLUMNS:
+        if key in out:
+            out[key] = float(out[key]) / scale
+    return out
+
+
+def load_production_model():
+    meta = validate_model_bundle()
+    try:
+        pipe = joblib.load(MODEL_FILE)
+    except OSError as exc:
+        raise ModelUnavailableError(
+            f"Production model not found at {MODEL_FILE}. Run `python3 scripts/train_models.py` first."
+        ) from exc
     return pipe, meta
 
 
@@ -68,10 +187,15 @@ def predict_risk(pipeline, features: dict, meta: dict) -> dict:
     if violations:
         raise ValueError(f"invalid_credit_profile: {'; '.join(violations)}")
 
-    model_df = pd.DataFrame([to_model_units(features)])
+    model_df = pd.DataFrame([to_model_units(features, meta)])
     fe, _flags = add_derived_features(model_df)
-    cols = [c for c in fe.columns if c != "default"]
-    proba = float(pipeline.predict_proba(fe[cols])[0, 1])
+    # Feature order comes from the artifact when declared, so inference follows
+    # exactly what was trained (the ColumnTransformer also selects by name).
+    feature_order = meta.get("feature_order") or [c for c in fe.columns if c != "default"]
+    missing = [c for c in feature_order if c not in fe.columns]
+    if missing:
+        raise ValueError(f"artifact_contract_error: missing features {missing}")
+    proba = float(pipeline.predict_proba(fe[feature_order])[0, 1])
 
     # Decision engineering (Phase 4): the DECISION is driven by the cost-tuned
     # threshold trained into meta.json (e.g. 0.2), while the displayed

@@ -2,6 +2,22 @@
 
 Source of truth: docs/architecture/domains/credit-data-dictionary.md v0.1
 Pure pandas validation — no sklearn, no .fit(), no training.
+
+Money-unit contract (single source of truth — do NOT re-derive this elsewhere)
+-----------------------------------------------------------------------------
+The API/UI contract for the three money fields is **VND (đồng)**:
+
+    income, loan_amount, existing_debt  ->  VND
+
+The synthetic training artifact stores money in **nghìn VND** (thousand VND), a
+pure scale difference of ``VND_PER_TRAINING_UNIT``; that divisor is persisted in
+``models/production/meta.json`` at training time and read back by serving, so the
+scale can never drift between training and inference.
+
+Values below ``MIN_MONEY_VND`` cannot be VND — they are training-scale numbers
+sent through the VND contract (or plain nonsense). They are **rejected loudly**
+by ``validate_money_unit_contract`` instead of being rescaled by a magnitude
+heuristic (spec §3/§9: honest, auditable decisions; no silent unit guessing).
 """
 
 from __future__ import annotations
@@ -22,6 +38,46 @@ CANONICAL_COLUMNS = [
 TARGET_COLUMN = "default"
 
 AGE_MIN, AGE_MAX = 18, 100
+
+# --- Money-unit contract ----------------------------------------------------
+MONEY_COLUMNS: tuple[str, ...] = ("income", "loan_amount", "existing_debt")
+MONEY_UNIT = "VND"
+TRAINING_MONEY_UNIT = "nghìn VND"
+VND_PER_TRAINING_UNIT = 1000.0
+# Absolute floors below which a value cannot be a real VND amount. Kept at the
+# same order of magnitude as the training support minimum (1,500 nghìn VND
+# income ≈ 1.5M VND/month) so genuine low-income demo profiles still pass.
+MIN_MONEY_VND: dict[str, float] = {
+    "income": 1_000_000.0,
+    "loan_amount": 1_000_000.0,
+}
+
+
+def validate_money_unit_contract(features: dict) -> list[str]:
+    """Check that money fields are plausible VND amounts (unit contract).
+
+    Returns a list of violation messages; empty means the payload satisfies the
+    VND contract. Non-numeric / missing values are ignored here (the request
+    schema and ``validate_dataframe`` handle those).
+    """
+    violations: list[str] = []
+    for col in MONEY_COLUMNS:
+        if col not in features:
+            continue
+        try:
+            value = float(features[col])
+        except (TypeError, ValueError):
+            continue
+        floor = MIN_MONEY_VND.get(col)
+        if floor is None:
+            continue
+        if value < floor:
+            violations.append(
+                f"{col}: {value:g} is below the {MONEY_UNIT} contract floor "
+                f"{floor:,.0f} — money fields must be sent in {MONEY_UNIT}; "
+                f"training-scale values ({TRAINING_MONEY_UNIT}) are not accepted"
+            )
+    return violations
 
 SCHEMA: dict[str, dict] = {
     "income": {

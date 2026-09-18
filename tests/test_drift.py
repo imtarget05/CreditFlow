@@ -112,3 +112,14 @@ def test_detect_handles_missing_reference_feature():
     report = detect_drift(ref, recent, min_samples=50)
     assert report["status"] in (NO_DRIFT, DRIFT_DETECTED)
     assert "loan_amount" not in report["features"]
+
+
+@pytest.mark.parametrize("recent", [
+    pd.DataFrame({"unrelated": np.ones(60)}),
+    pd.DataFrame({"income": np.full(60, np.nan)}),
+])
+def test_no_comparable_values_is_insufficient_not_no_drift(recent):
+    ref = compute_reference_stats(pd.DataFrame({"income": np.arange(100)}), ["income"])
+    report = detect_drift(ref, recent, min_samples=50)
+    assert report["status"] == INSUFFICIENT_DATA
+    assert report["compared"]["features"] == 0

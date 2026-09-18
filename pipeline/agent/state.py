@@ -49,6 +49,8 @@ class CreditState(TypedDict, total=False):
     # --- identity / provenance ---
     application_id: str
     audit_id: str
+    workflow_status: str  # COMPLETED | INTERRUPTED | FAILED
+    error_code: str | None
 
     # --- raw input ---
     data_classification: str     # CONFIDENTIAL, INTERNAL, PUBLIC

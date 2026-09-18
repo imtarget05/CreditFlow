@@ -6,3 +6,6 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "integration: marks tests that require live network access"
     )
+    config.addinivalue_line(
+        "markers", "slow: marks tests that take tens of seconds (full workflow runs)"
+    )

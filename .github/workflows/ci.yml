@@ -35,8 +35,50 @@ jobs:
         run: |
           pip list | grep -Ei 'fastapi|scikit-learn|xgboost|pandas|numpy|langgraph|pytest'
 
-      - name: Run tests (exclude live-network integration tests)
-        run: python -m pytest tests/ -q -m "not integration" --strict-markers
+      - name: Run tests (exclude live-network integration + slow workflow tests)
+        run: python -m pytest tests/ -q -m "not integration and not slow" --strict-markers
+
+      # Plan 2026-09-18 safety gates: bundle contract, replay-safe
+      # disbursement, simulation-only gateway rejection.
+      - name: Safety gates (bundle contract / replay-safe disbursement / simulated gateways)
+        run: python -m pytest tests/test_predict_units.py tests/test_models.py tests/test_ledger_units.py tests/test_checkpoint_persistence.py tests/test_api.py -q --strict-markers
+
+      - name: Production config rejects simulated gateways
+        env:
+          CREDITFLOW_ENV: production
+        run: |
+          python - <<'PY'
+          import os
+          os.environ["CREDITFLOW_ENV"] = "production"
+          from pipeline.agent.nodes import fetch_gateways
+          try:
+              fetch_gateways({"customer_data": {}, "audit_trail": []})
+          except RuntimeError as exc:
+              assert "GATEWAY_UNAVAILABLE" in str(exc), str(exc)
+              print("OK: production rejects simulated gateways")
+          else:
+              raise SystemExit("production must fail closed on simulated gateways")
+          PY
+
+  test-slow:
+    name: Backend — slow workflow tests (LangGraph + ledger, ~minutes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run slow tests (exclude live-network integration tests)
+        run: python -m pytest tests/ -q -m "slow and not integration" --strict-markers
 
   build-frontend:
     name: Frontend — npm ci + production build

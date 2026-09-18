@@ -31,6 +31,10 @@ from backend.predict_service import load_production_model
 from pipeline.agent.checkpointer import FileCheckpointSaver
 from pipeline.agent.graph import build_credit_graph
 
+# NOTE: graph-layer resume tests below are local-only fast (file saver +
+# model fixtures, no HTTP). Only the API-level restart tests at the bottom
+# carry the `slow` marker individually.
+
 REVIEW_PROFILE = {
     "income": 8000000.0,
     "age": 35,
@@ -165,8 +169,10 @@ def test_corrupted_checkpoint_file_starts_fresh(checkpoint_env):
 
 
 # ---------------------------------------------------------------------------
-# API layer: approve works after a simulated server restart
+# API layer: approve works after a simulated server restart — SLOW (spins the
+# full 12-node LangGraph twice via TestClient lifespan).
 # ---------------------------------------------------------------------------
+@pytest.mark.slow
 def test_api_approve_works_after_simulated_restart(
     checkpoint_env, tmp_path, monkeypatch
 ):
