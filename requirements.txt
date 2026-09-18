@@ -25,3 +25,6 @@ langchain-core==1.6.2
 # Full tracking verified with mlflow==3.16.0 (experiment creditflow-risk +
 # registered model creditflow-risk). Install with: pip install mlflow==3.16.0
 # mlflow==3.16.0
+
+# Durable staging: Neon Postgres branch of pipeline/storage/ledger.py.
+psycopg[binary]>=3.1.0

@@ -53,7 +53,26 @@ def ledger_path() -> Path:
     return Path(env) if env else DEFAULT_LEDGER_PATH
 
 
+def _psycopg_connect(url: str):
+    """Postgres connection for Neon staging (Plan 02). Import is lazy so
+    local-only installs without psycopg keep working on SQLite."""
+    import psycopg
+
+    return psycopg.connect(url)
+
+
+def _postgres_url() -> str:
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if url.startswith("postgresql://") or url.startswith("postgres://"):
+        return url
+    return ""
+
+
 def _connect(db_path: Path | None = None) -> sqlite3.Connection:
+    if db_path is None:
+        pg_url = _postgres_url()
+        if pg_url:
+            return _psycopg_connect(pg_url)
     path = Path(db_path) if db_path else ledger_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
@@ -97,6 +116,82 @@ def init_db(db_path: Path | None = None) -> None:
                 ON disbursements(application_id);
             """
         )
+
+
+_PG_DURABLE_DDL = """
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    caller_scope TEXT NOT NULL,
+    idem_key     TEXT NOT NULL,
+    fingerprint  TEXT NOT NULL DEFAULT '',
+    status       TEXT NOT NULL DEFAULT 'pending',
+    response     TEXT NOT NULL DEFAULT '',
+    expires_at   TIMESTAMPTZ,
+    PRIMARY KEY (caller_scope, idem_key)
+);
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id           TEXT PRIMARY KEY,
+    kind             TEXT NOT NULL DEFAULT '',
+    status           TEXT NOT NULL DEFAULT 'queued',
+    attempt          INTEGER NOT NULL DEFAULT 0,
+    lease_expires_at TIMESTAMPTZ,
+    input_ref        TEXT NOT NULL DEFAULT '',
+    result_ref       TEXT NOT NULL DEFAULT '',
+    error_class      TEXT NOT NULL DEFAULT '',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS outbox_events (
+    event_id      TEXT PRIMARY KEY,
+    destination   TEXT NOT NULL DEFAULT '',
+    payload       TEXT NOT NULL DEFAULT '',
+    version       TEXT NOT NULL DEFAULT 'v1',
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    next_retry_at TIMESTAMPTZ,
+    delivered_at  TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS dead_letters (
+    job_id          TEXT PRIMARY KEY,
+    input_ref       TEXT NOT NULL DEFAULT '',
+    diagnosis       TEXT NOT NULL DEFAULT '',
+    owner           TEXT NOT NULL DEFAULT '',
+    replay_decision TEXT NOT NULL DEFAULT 'pending'
+);
+CREATE TABLE IF NOT EXISTS audit_events (
+    id         BIGSERIAL PRIMARY KEY,
+    actor      TEXT NOT NULL DEFAULT '',
+    action     TEXT NOT NULL DEFAULT '',
+    object     TEXT NOT NULL DEFAULT '',
+    request_id TEXT NOT NULL DEFAULT '',
+    outcome    TEXT NOT NULL DEFAULT '',
+    reason     TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS model_registry (
+    version        TEXT PRIMARY KEY,
+    fingerprint    TEXT NOT NULL DEFAULT '',
+    corpus_version TEXT NOT NULL DEFAULT '',
+    status         TEXT NOT NULL DEFAULT 'staged',
+    promoted_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status);
+CREATE INDEX IF NOT EXISTS idx_outbox_next_retry ON outbox_events (next_retry_at)
+    WHERE delivered_at IS NULL;
+"""
+
+
+def init_db_pg() -> None:
+    """Create the shared durable tables on Neon (Plan 02). SQLite DDL in
+    init_db() is untouched; this runs only against postgres."""
+    pg_url = _postgres_url()
+    if not pg_url:
+        raise RuntimeError("DATABASE_URL must be a postgresql:// URL for init_db_pg")
+    conn = _psycopg_connect(pg_url)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(_PG_DURABLE_DDL)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _now_iso() -> str:
