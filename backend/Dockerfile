@@ -5,7 +5,7 @@
 # Run via compose (preferred — đúng network/service layout của repo):
 #   docker compose up api
 # Secrets (CLOUDFLARE_*) are NOT baked in — pass via --env-file or -e flags.
-# Health:  curl http://localhost:8080/health
+# Health:  curl http://localhost:8080/health/live
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

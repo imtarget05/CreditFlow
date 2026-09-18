@@ -2,6 +2,8 @@
 
 Endpoints (spec §12):
   GET  /health       -> service + model status
+  GET  /health/live  -> liveness, no dependency checks
+  GET  /health/ready -> readiness (model bundle + checkpoint gates, no writes)
   POST /predict      -> real ML prediction from a credit profile
   GET  /model/info   -> production model version + metrics + selection reasoning
   GET  /metrics      -> runtime request/latency/error counters + benchmark
@@ -188,6 +190,41 @@ def health():
         model_version=meta.get("version", "unknown"),
         model_name=meta.get("model_name", "unknown"),
     )
+
+
+@app.get("/health/live")
+def health_live():
+    """Liveness: process can serve requests. No dependency checks."""
+    return {"status": "ok", "service": "creditflow-api", "version": app.version}
+
+
+@app.get("/health/ready")
+def health_ready():
+    """Readiness: model bundle + checkpoint quarantine gates.
+
+    Read-only: inspects app.state only, never touches customer data,
+    performs no writes, opens no new connections.
+    """
+    import os as _os
+
+    meta = getattr(app.state, "meta", {})
+    model_loaded = hasattr(app.state, "pipeline") and app.state.pipeline is not None
+    chk = getattr(app.state, "checkpointer", None)
+    corrupt = bool(getattr(chk, "checkpoint_corrupt", False))
+    checks = {
+        "model": "ok" if model_loaded else "not-ready: pipeline not loaded",
+        "checkpoint": "not-ready: checkpoint corrupt" if corrupt else "ok",
+        "config": "ok",
+    }
+    prod_sim = _os.environ.get("CREDITFLOW_ENV", "development").lower() == "production"
+    if prod_sim:
+        checks["config"] = "not-ready: CREDITFLOW_ENV=production simulation gate"
+    ready = all(value == "ok" for value in checks.values())
+    return {
+        "status": "ready" if ready else "not-ready",
+        "checks": checks,
+        "model_version": meta.get("version", "unknown"),
+    }
 
 
 @app.post("/predict", response_model=PredictResponse)

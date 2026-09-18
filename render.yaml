@@ -1,12 +1,11 @@
-# CreditFlow — deploy on Render (free tier)
+# CreditFlow — deploy on Render (free tier, Docker runtime)
 # Dashboard: https://dashboard.render.com → New → Web Service → connect this repo.
-# Build Command : pip install -r requirements.txt
-# Start Command : uvicorn backend.app:app --host 0.0.0.0 --port $PORT
-# Health check  : /health
+# Runtime     : docker (./backend/Dockerfile, context repo root)
+# Health check: /health/live (readiness at /health/ready, counters at /metrics)
 # Env vars      : PYTHON_VERSION=3.12.7, MLFLOW_DISABLE_AGENT_HINT=1
 #                 + GenAI (Cloudflare Workers AI) — secrets marked sync:false,
 #                 fill them in the Render dashboard after first deploy.
-# After deploy, verify: GET <url>/health, POST <url>/predict, GET <url>/model/info
+# After deploy, verify: GET <url>/health/live, GET <url>/health/ready, POST <url>/predict, GET <url>/model/info
 #
 # SECURITY: CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are marked sync:false
 # so they are set in the Render dashboard only — never committed to this repo.
@@ -14,14 +13,12 @@
 services:
   - type: web
     name: creditflow-api
-    runtime: python
+    runtime: docker
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /health
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/live
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.7
       - key: MLFLOW_DISABLE_AGENT_HINT
         value: "1"
       # GenAI explain layer — Cloudflare Workers AI.
