@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -221,5 +223,183 @@ def test_api_approve_works_after_simulated_restart(
         r = client.get(f"/audit/{application_id}")
         assert r.status_code == 200
         assert r.json()["thread_id"] == thread_id
+
+    app_module._reset_shared_graph()
+
+
+# ---------------------------------------------------------------------------
+# Regression: the resume-after-restart path with a mutating state dict.
+# ---------------------------------------------------------------------------
+class _GatedWritesBucket(dict):
+    """A persisted-writes bucket that yields control in the middle of a walk.
+
+    ``FileCheckpointSaver._snapshot()`` shallow-copies only the top level of
+    ``self.writes``, so the encoder walks the *live* inner
+    ``writes[(thread_id, checkpoint_ns, checkpoint_id)]`` dicts with
+    ``for k, v in obj.items()``.  Yielding after the first item reproduces the
+    GIL hand-off that, in production, lets a second thread resize that dict
+    mid-iteration ("dictionary changed size during iteration").  Only the first
+    walk pauses, so the concurrent writer's own snapshot never blocks.
+    """
+
+    def __init__(self, initial, walking, resume_walk):
+        super().__init__(initial)
+        self._walking = walking
+        self._resume_walk = resume_walk
+        self._armed = True
+
+    def items(self):
+        entries = super().items()
+        if not self._armed:
+            return entries
+        self._armed = False
+
+        def _paused():
+            for index, entry in enumerate(entries):
+                if index == 1:
+                    self._walking.set()
+                    self._resume_walk.wait(30)
+                yield entry
+
+        return _paused()
+
+
+@pytest.mark.slow
+def test_api_approve_works_after_simated_restart_with_mutating_state(
+    checkpoint_env, tmp_path, monkeypatch
+):
+    """Approve must still resume after a restart while the state dict mutates.
+
+    Regression for ``GRAPH_RESUME_FAILED: dictionary changed size during
+    iteration`` (GitHub Actions run 36206195878, HTTP 502).  LangGraph
+    dispatches ``put``/``put_writes`` onto its ``BackgroundExecutor`` thread
+    pool without blocking, so the saver's shared ``storage``/``writes``/``blobs``
+    dicts were mutated by one thread while another walked them to persist a
+    snapshot: the lock guarded only the file write, not the walk.  Only the
+    resume crashed, because only the resume appends into a ``writes`` bucket
+    that was restored from the checkpoint file.  The saver must serialize the
+    whole read-modify-snapshot sequence.
+    """
+    from pipeline.agent import checkpointer as checkpointer_module
+    from pipeline.storage.ledger import init_db
+
+    monkeypatch.setenv("CREDITFLOW_LEDGER_DB", str(tmp_path / "ledger.db"))
+    init_db()
+    app_module._reset_shared_graph()
+
+    with TestClient(app) as client:
+        started = None
+        for profile in REVIEW_CANDIDATES:
+            r = client.post("/predict/graph", json={"customer_data": profile})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            if body.get("approval_required"):
+                started = body
+                break
+        assert started is not None, "no candidate produced a REVIEW workflow"
+        thread_id = started["thread_id"]
+
+    # --- simulate a server restart: drop the shared graph + checkpointer ---
+    app_module._reset_shared_graph()
+
+    walking = threading.Event()
+    resume_walk = threading.Event()
+    mutate_now = threading.Event()
+    armed = threading.Event()
+    armed.set()
+    resume_bucket: list = []
+
+    real_put_writes = checkpointer_module.FileCheckpointSaver.put_writes
+
+    def gate_resume_writes(self, config, writes, task_id, task_path=""):
+        """Gate the bucket the resume itself appends into (the loaded one)."""
+        conf = config["configurable"]
+        outer_key = (
+            conf.get("thread_id"),
+            conf.get("checkpoint_ns", ""),
+            conf.get("checkpoint_id"),
+        )
+        if armed.is_set() and any(channel == "__resume__" for channel, _ in writes):
+            armed.clear()
+            resume_bucket.append(outer_key)
+            self.writes[outer_key] = _GatedWritesBucket(
+                self.writes[outer_key], walking, resume_walk
+            )
+        return real_put_writes(self, config, writes, task_id, task_path)
+
+    monkeypatch.setattr(
+        checkpointer_module.FileCheckpointSaver, "put_writes", gate_resume_writes
+    )
+
+    with TestClient(app) as client:
+        # A thread that truly never started still 404s.
+        r = client.post(
+            "/predict/graph/run-never-started/approve", json={"action": "approve"}
+        )
+        assert r.status_code == 404
+
+        saver = app.state.checkpointer
+        stop = threading.Event()
+
+        def concurrent_writer():
+            """A second in-flight workflow writing to the shared checkpointer."""
+            if not mutate_now.wait(30):
+                return
+            index = 0
+            while not stop.is_set():
+                index += 1
+                thread, namespace, checkpoint = resume_bucket[0]
+                try:
+                    saver.put_writes(
+                        {"configurable": {
+                            "thread_id": thread,
+                            "checkpoint_ns": namespace,
+                            "checkpoint_id": checkpoint,
+                        }},
+                        [("__start__", {"seq": index})],
+                        f"concurrent-task-{index}",
+                    )
+                except Exception:
+                    return
+
+        def watchdog():
+            # Let the resume's snapshot walk reach the gate, give the second
+            # writer time to resize the live bucket, then let the walk finish.
+            if not walking.wait(30):
+                return
+            time.sleep(0.3)
+            mutate_now.set()
+            time.sleep(0.3)
+            resume_walk.set()
+
+        helpers = [
+            threading.Thread(target=concurrent_writer, daemon=True),
+            threading.Thread(target=watchdog, daemon=True),
+        ]
+        for helper in helpers:
+            helper.start()
+
+        r = client.post(
+            f"/predict/graph/{thread_id}/approve",
+            json={"action": "approve", "note": "approved after restart"},
+        )
+        resume_walk.set()
+        stop.set()
+        for helper in helpers:
+            helper.join(timeout=15)
+
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["workflow_complete"] is True
+        assert body["approval_status"] == "APPROVED"
+        assert body["disbursement"] is not None
+        assert body["disbursement"]["status"] == "COMPLETED"
+
+        # The interleaved writer did not corrupt persistence: the audit trail
+        # and the approved thread both survive.
+        r = client.get(f"/audit/{body['application_id']}")
+        assert r.status_code == 200
+        assert r.json()["thread_id"] == thread_id
+        assert thread_id in saver.threads()
 
     app_module._reset_shared_graph()

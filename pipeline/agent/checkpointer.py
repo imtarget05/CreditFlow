@@ -24,14 +24,17 @@ import pickle
 import threading
 import uuid
 from collections import defaultdict
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any, Sequence
 
 from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.base import DeltaChannelHistory
 from langgraph.checkpoint.memory import (
     ChannelVersions,
     Checkpoint,
     CheckpointMetadata,
+    CheckpointTuple,
     InMemorySaver,
 )
 
@@ -45,10 +48,18 @@ def checkpoint_path() -> Path:
     return Path(env) if env else DEFAULT_CHECKPOINT_PATH
 
 
-# Single-process write lock — LangGraph may call put/put_writes from
-# worker threads concurrently (the same discipline ledger.py uses for
-# FastAPI's threadpool).
-_snapshot_lock = threading.Lock()
+# Single-process store lock — LangGraph dispatches `put` and `put_writes`
+# onto its `BackgroundExecutor` thread pool *without blocking*
+# (_loop.py: "save it, without blocking"), so several checkpointer calls
+# genuinely run concurrently inside one `graph.invoke`, on top of
+# FastAPI's threadpool (the same discipline ledger.py uses).  The three
+# stores are plain mutable dicts shared by every thread, so this lock has
+# to cover the whole read-modify-snapshot sequence: guarding only the file
+# write left the store walk unsynchronised, and a concurrent resize of a
+# live `writes` bucket surfaced as "dictionary changed size during
+# iteration" (HTTP 502 GRAPH_RESUME_FAILED on resume-after-restart).
+# Re-entrant because `_snapshot` re-acquires it from inside put/put_writes.
+_snapshot_lock = threading.RLock()
 
 
 def _encode_obj(obj: Any) -> Any:
@@ -189,8 +200,11 @@ class FileCheckpointSaver(InMemorySaver):
         metadata: CheckpointMetadata,
         new_versions: ChannelVersions,
     ) -> RunnableConfig:
-        result = super().put(config, checkpoint, metadata, new_versions)
-        self._snapshot()
+        # Mutate and persist atomically: the snapshot walk must never see a
+        # store that another thread is halfway through resizing.
+        with _snapshot_lock:
+            result = super().put(config, checkpoint, metadata, new_versions)
+            self._snapshot()
         return result
 
     def put_writes(
@@ -200,14 +214,50 @@ class FileCheckpointSaver(InMemorySaver):
         task_id: str,
         task_path: str = "",
     ) -> None:
-        super().put_writes(config, writes, task_id, task_path)
-        self._snapshot()
+        with _snapshot_lock:
+            super().put_writes(config, writes, task_id, task_path)
+            self._snapshot()
 
     def delete_thread(self, thread_id: str) -> None:
-        super().delete_thread(thread_id)
-        self._snapshot()
+        with _snapshot_lock:
+            super().delete_thread(thread_id)
+            self._snapshot()
+
+    # -- read hooks -----------------------------------------------------------
+    # The parent serves reads by walking these same three stores, and its
+    # defaultdicts auto-vivify an entry while doing so — so reads mutate the
+    # stores too and need the lock as well.
+    def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
+        with _snapshot_lock:
+            return super().get_tuple(config)
+
+    def get_delta_channel_history(
+        self, *, config: RunnableConfig, channels: Sequence[str]
+    ) -> Mapping[str, DeltaChannelHistory]:
+        with _snapshot_lock:
+            return super().get_delta_channel_history(
+                config=config, channels=channels
+            )
+
+    def list(
+        self,
+        config: RunnableConfig | None,
+        *,
+        filter: dict[str, Any] | None = None,
+        before: RunnableConfig | None = None,
+        limit: int | None = None,
+    ) -> Iterator[CheckpointTuple]:
+        with _snapshot_lock:
+            return iter(
+                list(
+                    super().list(
+                        config, filter=filter, before=before, limit=limit
+                    )
+                )
+            )
 
     # -- inspection helpers ---------------------------------------------------
     def threads(self) -> list[str]:
         """All thread IDs that have at least one checkpoint."""
-        return list(self.storage.keys())
+        with _snapshot_lock:
+            return list(self.storage.keys())
