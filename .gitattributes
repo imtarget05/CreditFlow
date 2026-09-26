@@ -1,0 +1,10 @@
+# Content-addressed artifacts must byte-match the SHA-256 recorded in
+# models/production/manifest.json and meta.json. Without -text, git's
+# core.autocrlf rewrites these files from LF to CRLF on checkout on Windows,
+# which changes their SHA-256 and makes validate_model_bundle() fail, so the
+# whole test suite errors at collection. Verified on Windows with
+# core.autocrlf=true: blob hash == manifest hash, worktree hash != manifest hash.
+models/production/** -text
+
+# Same contract for the training dataset pinned by meta.json dataset_sha256.
+data/*.csv -text
