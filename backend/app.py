@@ -27,9 +27,17 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Security
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
+
+from backend.security import (
+    Principal,
+    allowed_origins,
+    ensure_authority,
+    require_configured_key,
+    require_principal,
+)
 
 from backend.predict_service import load_production_model, predict_risk, to_model_units
 from backend.predict_service import ArtifactContractError
@@ -157,6 +165,9 @@ prediction_window: deque = deque(maxlen=500)
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Fail closed: a production deployment without a shared API key must not
+    # start at all, rather than come up with every protected route open.
+    require_configured_key()
     app.state.pipeline, app.state.meta = load_production_model()
     # Durable ledger for applications + disbursements (core-banking slice).
     ledger_init_db()
@@ -179,10 +190,13 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # Explicit allow-list (backend/security.py:allowed_origins). A wildcard
+    # origin on a money-moving API is refused there, and allow_credentials
+    # stays False so a wildcard is never combined with credentials.
+    allow_origins=allowed_origins(),
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept", "X-CreditFlow-API-Key"],
 )
 
 
@@ -412,7 +426,14 @@ class GraphApprovalRequest(BaseModel):
     """Request body to resume a paused workflow with human approval."""
     action: str = Field(..., description="'approve' or 'reject'")
     note: str = ""
-    approver_id: str = Field(default="supervisor_on_duty", description="Supervisor identity approving the disbursement")
+    approver_id: str = Field(
+        default="",
+        description=(
+            "Deprecated and no longer trusted: the approver identity comes "
+            "from the authenticated API key. A value that disagrees with the "
+            "authenticated identity is rejected with 422."
+        ),
+    )
     idempotency_key: str = Field(default="", description="Client-supplied idempotency key; required for approval")
 
 
@@ -529,17 +550,42 @@ def start_graph_workflow(req: GraphStartRequest):
 
 
 @app.post("/predict/graph/{thread_id}/approve")
-def approve_graph_workflow(thread_id: str, req: GraphApprovalRequest):
+def approve_graph_workflow(
+    thread_id: str,
+    req: GraphApprovalRequest,
+    principal: Principal = Security(require_principal),
+):
     """Resume a paused workflow with a human approval decision.
 
     Replay-safe single transaction: reserve PENDING_REVIEW with approver +
     idempotency key, resume the graph, disburse only on final APPROVE.
     The ``action`` string is informational; persisted state is authority.
+
+    Requires the shared API key; ``approver_id`` is taken from the
+    authenticated identity and the key must hold at least the credit
+    authority this application was routed to.
     """
     from langgraph.types import Command
 
+    # A self-asserted approver is a spoof attempt, not a compatibility
+    # nicety: reject it loudly instead of silently dropping it, so a client
+    # can never believe its own identity was recorded.
+    claimed = (req.approver_id or "").strip()
+    if claimed and claimed != principal.identity:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "APPROVER_ID_NOT_AUTHORIZED: approver_id is derived from the "
+                "authenticated API key, not from the request body."
+            ),
+        )
+
     graph = _get_graph(thread_id)
     run_config = {"configurable": {"thread_id": thread_id}}
+    # Authorise against the authority the workflow itself demanded.
+    ensure_authority(
+        principal, graph.get_state(config=run_config).values.get("authority_level")
+    )
 
     persisted = get_application_by_thread(thread_id)
     if persisted is None or persisted.get("status") != STATUS_PENDING_REVIEW:
@@ -577,8 +623,7 @@ def approve_graph_workflow(thread_id: str, req: GraphApprovalRequest):
         }
     try:
         reservation = approve_pending_application(
-            thread_id, req.approver_id.strip() or "supervisor_on_duty",
-            idem_key,
+            thread_id, principal.identity, idem_key,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -770,10 +815,17 @@ def get_audit_trail(application_id: str):
 # ---------------------------------------------------------------------------
 @app.get("/applications")
 @app.get("/api/applications")
-def list_loan_applications(status: str | None = None):
+def list_loan_applications(
+    status: str | None = None,
+    principal: Principal = Security(require_principal),
+):
     """Evidence endpoint: all loan applications in the durable ledger.
 
     Optional filter: ``?status=PENDING_REVIEW|APPROVED|REJECTED``.
+
+    Authenticated rather than redacted: every row carries the full
+    ``customer_data`` blob, so redaction would gut the endpoint while still
+    leaking which applications exist.
     """
     rows = list_applications(status=status)
     return {"count": len(rows), "applications": rows}
@@ -781,11 +833,14 @@ def list_loan_applications(status: str | None = None):
 
 @app.get("/disbursements")
 @app.get("/api/disbursements")
-def list_disbursement_ledger():
+def list_disbursement_ledger(principal: Principal = Security(require_principal)):
     """Evidence endpoint: the actual disbursement general ledger.
 
     Each row carries ``hash_valid`` (SHA-256 recomputed from the hashed fields),
     so an edited row is visible here — tamper evidence, not immutability.
+
+    Authenticated rather than redacted: the money totals are the sensitive
+    part, so hiding them would not protect anything.
     """
     rows = list_disbursements()
     total = sum(float(r.get("loan_amount") or 0.0) for r in rows)

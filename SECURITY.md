@@ -12,6 +12,11 @@ CreditFlow commits **no secrets, keys, or credentials**. All config values are h
 1. Edit `.env` locally (contains real value..)
 2. Never `git add .env`; commit only code + `.env.example` (blank).
 3. For MLflow remote store, use env vars `MLFLOW_TRACKING_USERNAME/PASSWORD` — do not hardcode in source.
+4. `CREDITFLOW_API_KEY` is the shared secret for `POST /predict/graph/{thread_id}/approve` and the
+   `GET /applications` / `GET /disbursements` evidence endpoints. It is read from the environment
+   only, is never committed, and is declared `sync: false` in `render.yaml`. With
+   `CREDITFLOW_ENV=production` the app refuses to start when it is unset. `CREDITFLOW_API_KEY_ID`
+   and `CREDITFLOW_API_KEY_ROLE` are identity/authority labels, not secrets.
 
 ## Verification
 - Before each push: `git grep -InE '(secret|token|password|BEGIN .*PRIVATE KEY|AKIA|sk-[A-Za-z0-9]|ghp_)' $(git ls-files)` — should return only this doc's policy phrases..

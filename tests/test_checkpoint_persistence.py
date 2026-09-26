@@ -32,6 +32,7 @@ from backend.app import app
 from backend.predict_service import load_production_model
 from pipeline.agent.checkpointer import FileCheckpointSaver
 from pipeline.agent.graph import build_credit_graph
+from tests.auth_support import AUTH_HEADERS, configure_auth_env
 
 # NOTE: graph-layer resume tests below are local-only fast (file saver +
 # model fixtures, no HTTP). Only the API-level restart tests at the bottom
@@ -181,6 +182,8 @@ def test_api_approve_works_after_simulated_restart(
     from pipeline.storage.ledger import init_db
 
     monkeypatch.setenv("CREDITFLOW_LEDGER_DB", str(tmp_path / "ledger.db"))
+    # The approve endpoint requires the shared API key.
+    configure_auth_env(monkeypatch)
     init_db()
     app_module._reset_shared_graph()
 
@@ -202,7 +205,9 @@ def test_api_approve_works_after_simulated_restart(
     with TestClient(app) as client:
         # A thread that truly never started still 404s.
         r = client.post(
-            "/predict/graph/run-never-started/approve", json={"action": "approve"}
+            "/predict/graph/run-never-started/approve",
+            json={"action": "approve"},
+            headers=AUTH_HEADERS,
         )
         assert r.status_code == 404
 
@@ -210,6 +215,7 @@ def test_api_approve_works_after_simulated_restart(
         r = client.post(
             f"/predict/graph/{thread_id}/approve",
             json={"action": "approve", "note": "approved after restart"},
+            headers=AUTH_HEADERS,
         )
         assert r.status_code == 200, r.text
         body = r.json()
@@ -284,6 +290,8 @@ def test_api_approve_works_after_simated_restart_with_mutating_state(
     from pipeline.storage.ledger import init_db
 
     monkeypatch.setenv("CREDITFLOW_LEDGER_DB", str(tmp_path / "ledger.db"))
+    # The approve endpoint requires the shared API key.
+    configure_auth_env(monkeypatch)
     init_db()
     app_module._reset_shared_graph()
 
@@ -334,7 +342,9 @@ def test_api_approve_works_after_simated_restart_with_mutating_state(
     with TestClient(app) as client:
         # A thread that truly never started still 404s.
         r = client.post(
-            "/predict/graph/run-never-started/approve", json={"action": "approve"}
+            "/predict/graph/run-never-started/approve",
+            json={"action": "approve"},
+            headers=AUTH_HEADERS,
         )
         assert r.status_code == 404
 
@@ -382,6 +392,7 @@ def test_api_approve_works_after_simated_restart_with_mutating_state(
         r = client.post(
             f"/predict/graph/{thread_id}/approve",
             json={"action": "approve", "note": "approved after restart"},
+            headers=AUTH_HEADERS,
         )
         resume_walk.set()
         stop.set()

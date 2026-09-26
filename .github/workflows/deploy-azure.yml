@@ -19,6 +19,19 @@ jobs:
   test-and-deploy:
     name: Test & Deploy to Azure
     runs-on: ubuntu-latest
+    # Deploy gate context.
+    #
+    # `AZURE_CREDENTIALS` used to be declared as a *step-level* env, and a
+    # step's own `env:` block is NOT part of the `env` context that GitHub
+    # exposes to that same step's `if:`. Both `azure/login` and the deploy step
+    # therefore evaluated `env.AZURE_CREDENTIALS != ''` against an empty
+    # string, were always skipped, and the job still reported success — a green
+    # "Deploy to Azure" run that deployed nothing. Declaring the credential at
+    # job level puts it in the `env` context, so the gate is now real: with the
+    # secret configured the condition is true and the deploy runs; without it the
+    # deploy is skipped and the final step says so in the run summary.
+    env:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
     steps:
       - uses: actions/checkout@v4
 
@@ -39,15 +52,20 @@ jobs:
       - name: Log in to Azure (using AZURE_CREDENTIALS secret)
         uses: azure/login@v2
         if: env.AZURE_CREDENTIALS != ''
-        env:
-          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          creds: ${{ env.AZURE_CREDENTIALS }}
 
       - name: Build & Deploy via Azure CLI
         if: env.AZURE_CREDENTIALS != ''
-        env:
-          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
         run: |
           chmod +x deploy/scripts/deploy-azure.sh
           ./deploy/scripts/deploy-azure.sh
+
+      - name: Report deploy status
+        if: always()
+        run: |
+          if [ -z "${AZURE_CREDENTIALS:-}" ]; then
+            echo "::warning title=Azure deploy skipped::AZURE_CREDENTIALS is not configured for this repository, so the login and deploy steps were skipped. This run verified the test subset only — it did NOT deploy to Azure." >&2
+          else
+            echo "Azure login + deploy ran with the configured AZURE_CREDENTIALS secret."
+          fi

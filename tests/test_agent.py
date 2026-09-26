@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient
 
 from backend.app import app
 from backend.predict_service import load_production_model
+from tests.auth_support import AUTH_HEADERS, configure_auth_env
 
 _stack = ExitStack()
 client = _stack.enter_context(TestClient(app))
@@ -359,6 +360,8 @@ def test_graph_endpoint_start_reject(monkeypatch):
 def test_graph_endpoint_start_review_and_resume(monkeypatch):
     for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
         monkeypatch.delenv(var, raising=False)
+    # The approve endpoint requires the shared API key (see tests/auth_support.py).
+    configure_auth_env(monkeypatch)
     r = client.post("/predict/graph", json={"customer_data": MID_RISK})
     assert r.status_code == 200
     body = r.json()
@@ -368,7 +371,11 @@ def test_graph_endpoint_start_review_and_resume(monkeypatch):
 
     thread_id = body["thread_id"]
 
-    r2 = client.post("/predict/graph/" + thread_id + "/approve", json={"action": "approve"})
+    r2 = client.post(
+        "/predict/graph/" + thread_id + "/approve",
+        json={"action": "approve"},
+        headers=AUTH_HEADERS,
+    )
     assert r2.status_code == 200
     body2 = r2.json()
     assert body2["decision"] == "APPROVE"
@@ -380,6 +387,7 @@ def test_graph_endpoint_start_review_and_resume(monkeypatch):
 def test_graph_endpoint_start_review_and_reject(monkeypatch):
     for var in ("CREDITFLOW_LLM_PROVIDER", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_MODEL"):
         monkeypatch.delenv(var, raising=False)
+    configure_auth_env(monkeypatch)
     r = client.post("/predict/graph", json={"customer_data": MID_RISK})
     assert r.status_code == 200
     body = r.json()
@@ -387,7 +395,11 @@ def test_graph_endpoint_start_review_and_reject(monkeypatch):
 
     thread_id = body["thread_id"]
 
-    r2 = client.post("/predict/graph/" + thread_id + "/approve", json={"action": "reject"})
+    r2 = client.post(
+        "/predict/graph/" + thread_id + "/approve",
+        json={"action": "reject"},
+        headers=AUTH_HEADERS,
+    )
     assert r2.status_code == 200
     body2 = r2.json()
     assert body2["decision"] == "REJECT"

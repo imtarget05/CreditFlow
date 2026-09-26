@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient
 
 from backend.app import app
 from pipeline.storage.ledger import init_db, ledger_path
+from tests.auth_support import AUTH_HEADERS, configure_auth_env
 
 # NOTE: disbursement SQLite tests are local-only fast. The `slow` marker is
 # applied only to tests that spin the full LangGraph + TestClient workflow.
@@ -61,7 +62,10 @@ def ledger_env(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
-def client(ledger_env):
+def client(ledger_env, monkeypatch):
+    # The approve + evidence endpoints are API-key protected: authenticate
+    # the way a real caller does.
+    configure_auth_env(monkeypatch)
     with TestClient(app) as c:
         yield c
 
@@ -108,7 +112,11 @@ def test_e2e_submit_review_approve_creates_contract_and_disbursement(
     app_id = started["ledger_application_id"]
 
     # 2. Chuyên viên phê duyệt -> tự động ghi sổ giải ngân.
-    r = client.post(f"/predict/graph/{thread_id}/approve", json={"action": "approve"})
+    r = client.post(
+        f"/predict/graph/{thread_id}/approve",
+        json={"action": "approve"},
+        headers=AUTH_HEADERS,
+    )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["ledger_status"] == "APPROVED"
@@ -157,7 +165,11 @@ def test_e2e_reject_flow_writes_no_disbursement(client, ledger_env):
     profile, started = _start_review_workflow(client)
     thread_id = started["thread_id"]
 
-    r = client.post(f"/predict/graph/{thread_id}/approve", json={"action": "reject"})
+    r = client.post(
+        f"/predict/graph/{thread_id}/approve",
+        json={"action": "reject"},
+        headers=AUTH_HEADERS,
+    )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["ledger_status"] == "REJECTED"
@@ -183,7 +195,7 @@ def test_evidence_endpoints_return_ledger_records(client, ledger_env):
     thread_id = started["thread_id"]
 
     # Trước phê duyệt: hồ sơ PENDING_REVIEW đã thấy qua /api/applications.
-    r = client.get("/api/applications")
+    r = client.get("/api/applications", headers=AUTH_HEADERS)
     assert r.status_code == 200
     body = r.json()
     assert body["count"] >= 1
@@ -191,14 +203,18 @@ def test_evidence_endpoints_return_ledger_records(client, ledger_env):
     assert match and match[0]["status"] == "PENDING_REVIEW"
     assert match[0]["customer_data"]["loan_amount"] == profile["loan_amount"]
 
-    client.post(f"/predict/graph/{thread_id}/approve", json={"action": "approve"})
+    client.post(
+        f"/predict/graph/{thread_id}/approve",
+        json={"action": "approve"},
+        headers=AUTH_HEADERS,
+    )
 
     # Sau phê duyệt: danh sách hồ sơ + sổ cái giải ngân thực tế.
-    r = client.get("/api/applications")
+    r = client.get("/api/applications", headers=AUTH_HEADERS)
     match = [a for a in r.json()["applications"] if a["thread_id"] == thread_id]
     assert match and match[0]["status"] == "APPROVED"
 
-    r = client.get("/api/disbursements")
+    r = client.get("/api/disbursements", headers=AUTH_HEADERS)
     assert r.status_code == 200
     ledger = r.json()
     assert ledger["count"] >= 1
@@ -207,7 +223,9 @@ def test_evidence_endpoints_return_ledger_records(client, ledger_env):
     assert any(CONTRACT_CODE_RE.match(c) for c in codes)
 
     # Filter theo status hoạt động.
-    r = client.get("/api/applications", params={"status": "APPROVED"})
+    r = client.get(
+        "/api/applications", params={"status": "APPROVED"}, headers=AUTH_HEADERS
+    )
     assert all(a["status"] == "APPROVED" for a in r.json()["applications"])
 
 
@@ -226,7 +244,11 @@ def test_ledger_persists_across_process_restart(client, ledger_env):
     assert row["customer_data"]["loan_amount"] == profile["loan_amount"]
 
     # Approve from the "restarted" server context still writes the ledger.
-    r = client.post(f"/predict/graph/{thread_id}/approve", json={"action": "approve"})
+    r = client.post(
+        f"/predict/graph/{thread_id}/approve",
+        json={"action": "approve"},
+        headers=AUTH_HEADERS,
+    )
     assert r.status_code == 200
     assert r.json()["disbursement"] is not None
     assert ledger_path().exists()
@@ -241,6 +263,7 @@ def test_disbursement_contract_codes_sequence_per_day(client, ledger_env):
         r = client.post(
             f"/predict/graph/{started['thread_id']}/approve",
             json={"action": "approve"},
+            headers=AUTH_HEADERS,
         )
         assert r.status_code == 200
         d = r.json()["disbursement"]

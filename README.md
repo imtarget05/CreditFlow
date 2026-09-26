@@ -7,7 +7,7 @@
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-Enabled-orange.svg)](https://scikit-learn.org/)
 [![MLflow](https://img.shields.io/badge/MLflow-3.16-blue.svg)](https://mlflow.org/)
 [![Docker](https://img.shields.io/badge/Docker-Supported-blue.svg)](https://www.docker.com/)
-[![Tests](https://img.shields.io/badge/Tests-118-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-196-success.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **CreditFlow** is a production-grade ML credit risk decision support system tailored for financial lending. Moving beyond simple notebook exercises, this is a fully deployable decision engine with a complete pipeline: **data validation → feature engineering → model training → evaluation → serving → monitoring**.
@@ -129,13 +129,37 @@ The backend provides a comprehensive REST API for predictions, workflow manageme
 
 ### Workflow & State Management (LangGraph)
 - `POST /predict/graph` - Initiate a full LangGraph decision workflow
-- `POST /predict/graph/{thread_id}/approve` - Human approval (resumes a paused `REVIEW` workflow)
+- `POST /predict/graph/{thread_id}/approve` - Human approval (resumes a paused `REVIEW` workflow) — **API key required**
 - `GET /predict/graph/{thread_id}` - Get current workflow state
 - `GET /audit/{application_id}` - Full audit trail for an application
 
 ### Ledger & Records
-- `GET /api/applications` - List all processed loan applications
-- `GET /api/disbursements` - View the core-banking ledger (contracts and hashes)
+- `GET /api/applications` - List all processed loan applications — **API key required**
+- `GET /api/disbursements` - View the core-banking ledger (contracts and hashes) — **API key required**
+
+### Authentication
+The money-moving and PII endpoints above take one shared secret in the
+`X-CreditFlow-API-Key` header. It comes from the environment only — never
+from the repository — and the app **refuses to start** when
+`CREDITFLOW_ENV=production` and no key is configured.
+
+```bash
+curl -H "X-CreditFlow-API-Key: $CREDITFLOW_API_KEY" \
+  -H "Content-Type: application/json" \
+  -X POST http://localhost:8080/predict/graph/<thread_id>/approve \
+  -d '{"action":"approve"}'
+```
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `CREDITFLOW_API_KEY` | Shared secret for the protected endpoints | none — protected routes answer 401 without it |
+| `CREDITFLOW_API_KEY_ID` | Identity recorded as `approver_id` (never taken from the request body) | `supervisor_on_duty` |
+| `CREDITFLOW_API_KEY_ROLE` | Credit authority of the key: `UNDERWRITER_L1` or `RISK_COMMITTEE_L2` (from the authority matrix) | `UNDERWRITER_L1` |
+| `CREDITFLOW_CORS_ORIGINS` | Comma-separated CORS allow-list; a wildcard is refused | `http://localhost:5173,http://localhost:8080` |
+
+An approval is recorded against the authority the workflow itself demanded:
+a `RISK_COMMITTEE_L2` application cannot be approved with an `UNDERWRITER_L1`
+key (403, no disbursement written).
 
 ---
 
