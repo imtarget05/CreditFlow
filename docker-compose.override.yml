@@ -1,0 +1,7 @@
+services:
+  web:
+    ports: !override
+      - "8082:8080"
+    depends_on:
+      api:
+        condition: service_started

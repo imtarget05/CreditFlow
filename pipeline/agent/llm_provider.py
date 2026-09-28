@@ -46,6 +46,16 @@ OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
 DEFAULT_OLLAMA_MODEL = "qwen2.5:3b"
 OLLAMA_TIMEOUT = 30.0
 
+# Local LAN LLM via OpenAI-compatible /v1/chat/completions (LM Studio on the
+# M1 Pro, or the llm-gateway proxy in front of it). LOCAL, never public cloud —
+# so CONFIDENTIAL cases stay allowed and are never blocked by the Policy Guard.
+#   CREDITFLOW_LLM_PROVIDER=lmstudio  (aliases: local_openai, lms)
+#   LMSTUDIO_BASE_URL (default http://192.168.1.8:1234/v1/chat/completions)
+#   LMSTUDIO_MODEL    (default qwen2.5-vl-3b-instruct)
+DEFAULT_LMSTUDIO_CHAT_URL = "http://192.168.1.8:1234/v1/chat/completions"
+DEFAULT_LMSTUDIO_MODEL = "qwen2.5-vl-3b-instruct"
+LMSTUDIO_TIMEOUT = 120.0
+
 
 class LLMUnavailable(Exception):
     """Raised only for internal signalling; callers map to template fallback."""
@@ -250,6 +260,45 @@ def try_ollama_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
         return None
     try:
         content = (r.json().get("message") or {}).get("content", "") or ""
+        data = _balanced_json(content)
+    except Exception:
+        return None
+    return _normalize_explanation(data, model)
+
+
+def try_lmstudio_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
+    """Structured explanation via a local OpenAI-compatible endpoint (LM Studio).
+
+    Enabled only when ``CREDITFLOW_LLM_PROVIDER`` is ``lmstudio`` / ``local_openai``
+    / ``lms``. LOCAL backend (LAN), so the Policy Guard treats it like Ollama and
+    never blocks CONFIDENTIAL data. Returns ``None`` on any failure so the caller
+    falls back to the deterministic template — it never auto-chains to cloud.
+    """
+    provider = os.environ.get("CREDITFLOW_LLM_PROVIDER", "").lower().strip()
+    if provider not in ("lmstudio", "local_openai", "lms"):
+        return None
+    model = os.environ.get("LMSTUDIO_MODEL", DEFAULT_LMSTUDIO_MODEL).strip() or DEFAULT_LMSTUDIO_MODEL
+    url = os.environ.get("LMSTUDIO_BASE_URL", DEFAULT_LMSTUDIO_CHAT_URL).strip() or DEFAULT_LMSTUDIO_CHAT_URL
+    try:
+        r = httpx.post(
+            url,
+            headers={"Content-Type": "application/json", "X-Project": "CreditFlow"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": _compact_prompt(ctx)}],
+                "max_tokens": 400,
+                "temperature": 0.1,
+                "stream": False,
+            },
+            timeout=LMSTUDIO_TIMEOUT,
+        )
+    except Exception:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        choices = r.json().get("choices") or []
+        content = (choices[0].get("message", {}).get("content", "") if choices else "") or ""
         data = _balanced_json(content)
     except Exception:
         return None

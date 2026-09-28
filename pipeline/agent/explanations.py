@@ -225,6 +225,8 @@ def _try_llm_explanation(ctx: dict[str, Any]) -> ExplanationOutput | None:
     classification = ctx.get("data_classification", "CONFIDENTIAL")
     # NOTE: "ollama"/"local*" are LOCAL backends (qwen2.5:3b on this machine) —
     # never public cloud, so the Policy Guard must not block them.
+    # "lmstudio"/"local_openai"/"lms" are the same thing over an OpenAI-compatible
+    # LAN endpoint (LM Studio on the M1 Pro or the llm-gateway in front of it).
     is_public_cloud = provider in ("cloudflare", "groq", "openai", "anthropic", "google")
     allow_external = os.environ.get("CREDITFLOW_ALLOW_EXTERNAL_LLM", "").strip() == "1"
 
@@ -235,6 +237,10 @@ def _try_llm_explanation(ctx: dict[str, Any]) -> ExplanationOutput | None:
     if provider in ("ollama", "local", "local_ollama"):
         from pipeline.agent.llm_provider import try_ollama_explain
         return try_ollama_explain(ctx)
+
+    if provider in ("lmstudio", "local_openai", "lms"):
+        from pipeline.agent.llm_provider import try_lmstudio_explain
+        return try_lmstudio_explain(ctx)
 
     if provider == "local_vllm":
         from pipeline.agent.llm_provider import try_local_vllm_explain

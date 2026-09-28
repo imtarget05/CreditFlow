@@ -334,6 +334,7 @@ def llm_info():
         DEFAULT_MODEL,
         DEFAULT_OLLAMA_MODEL,
         DEFAULT_GROQ_MODEL,
+        DEFAULT_LMSTUDIO_MODEL,
     )
     from pipeline.agent.explanations import PROMPT_VERSION
     provider = os.environ.get("CREDITFLOW_LLM_PROVIDER", "").lower().strip() or "template"
@@ -348,6 +349,22 @@ def llm_info():
             url = os.environ.get("OLLAMA_BASE_URL", OLLAMA_CHAT_URL).strip() or OLLAMA_CHAT_URL
             base = url.rsplit("/api/chat", 1)[0]
             r = httpx.get(f"{base}/api/tags", timeout=min(OLLAMA_TIMEOUT, 5.0))
+            offline_ok = r.status_code == 200
+        except Exception:
+            offline_ok = False
+    elif provider in ("lmstudio", "local_openai", "lms"):
+        # Local LAN OpenAI-compatible endpoint (LM Studio / llm-gateway).
+        from pipeline.agent.llm_provider import DEFAULT_LMSTUDIO_CHAT_URL, LMSTUDIO_TIMEOUT
+
+        model = os.environ.get("LMSTUDIO_MODEL", DEFAULT_LMSTUDIO_MODEL).strip() or DEFAULT_LMSTUDIO_MODEL
+        configured = True  # local endpoint needs no key
+        offline_ok = False
+        try:
+            import httpx
+
+            url = os.environ.get("LMSTUDIO_BASE_URL", DEFAULT_LMSTUDIO_CHAT_URL).strip() or DEFAULT_LMSTUDIO_CHAT_URL
+            base = url.rsplit("/chat/completions", 1)[0]
+            r = httpx.get(f"{base}/models", timeout=min(LMSTUDIO_TIMEOUT, 5.0))
             offline_ok = r.status_code == 200
         except Exception:
             offline_ok = False
@@ -380,6 +397,39 @@ def runtime_metrics():
         "model": getattr(app.state, "meta", {}),
         "benchmark": _benchmark_payload(),
     }
+
+
+@app.get("/metrics/prometheus")
+def metrics_prometheus():
+    """Prometheus text exposition (scraped by observability/prometheus).
+
+    Kept alongside the JSON GET /metrics for backward compatibility.
+    Exposes request counters, error counters and average predict latency.
+    """
+    from fastapi.responses import PlainTextResponse
+
+    snap = metrics.snapshot()
+    lines = [
+        "# HELP creditflow_requests_total Total HTTP requests handled.",
+        "# TYPE creditflow_requests_total counter",
+        f"creditflow_requests_total {snap['requests']['total']}",
+    ]
+    for endpoint, count in snap["requests"].items():
+        if endpoint == "total":
+            continue
+        lines.append(f'creditflow_requests_by_endpoint{{endpoint="{endpoint}"}} {count}')
+    lines += [
+        "# HELP creditflow_errors_total Total handler errors.",
+        "# TYPE creditflow_errors_total counter",
+        f"creditflow_errors_total {snap['errors']['total']}",
+        "# HELP creditflow_avg_predict_latency_ms Average /predict latency.",
+        "# TYPE creditflow_avg_predict_latency_ms gauge",
+        f"creditflow_avg_predict_latency_ms {snap['avg_predict_latency_ms']}",
+        "# HELP creditflow_uptime_seconds Process uptime.",
+        "# TYPE creditflow_uptime_seconds gauge",
+        f"creditflow_uptime_seconds {snap['uptime_seconds']}",
+    ]
+    return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
 
 # ---------------------------------------------------------------------------

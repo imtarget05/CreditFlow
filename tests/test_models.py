@@ -84,9 +84,21 @@ def _prepared_df(n: int = 200, random_state: int = 42) -> pd.DataFrame:
 
 def test_model_factory_returns_four_models():
     models = get_model_factory()
-    assert len(models) == 4, f"Expected 4 models, got {len(models)}"
     names = [name for name, _ in models]
+    # Ba model sklearn là lõi bắt buộc phải luôn có.
+    for core in ("logistic_regression", "decision_tree", "random_forest"):
+        assert core in names, f"missing core model: {core}"
     assert len(names) == len(set(names)), "Model names must be unique"
+    # XGBoost là optional lúc runtime: libxgboost.dylib cần libomp trên macOS và
+    # dlopen lỗi thì get_model_factory() chủ động bỏ qua (xem models.py). Chỉ
+    # ép có "xgboost" khi chính interpreter import được nó — CI (Linux) vẫn strict.
+    try:
+        import xgboost  # noqa: F401
+    except Exception:
+        assert "xgboost" not in names, "xgboost import failed but factory still exposes it"
+    else:
+        assert "xgboost" in names, "xgboost importable but factory omitted it"
+    assert len(models) == len(names)
 
 
 def test_stratified_split_preserves_class_ratio():

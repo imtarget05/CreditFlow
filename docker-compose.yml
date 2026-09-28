@@ -35,6 +35,7 @@ services:
     restart: unless-stopped
     networks:
       - creditflow-net
+      - portfolio-net
 
   web:
     build:
@@ -50,11 +51,15 @@ services:
     restart: unless-stopped
     networks:
       - creditflow-net
+      - portfolio-net
 
 networks:
   creditflow-net:
     name: creditflow-net
     driver: bridge
+  portfolio-net:
+    external: true
+    name: portfolio-net
 
   # Optional MLflow tracking server (enable when a remote store is wanted):
   #   docker compose --profile mlflow up --build
