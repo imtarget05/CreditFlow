@@ -1,0 +1,107 @@
+name: Build and Publish API Image to GHCR
+
+# Cùng pipeline với Factory và MAIA: build trên runner, push GHCR, Azure
+# Container Apps pull theo digest. Mục tiêu là laptop KHÔNG build image.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'pipeline/**'
+      - 'models/production/**'
+      - 'Dockerfile.api'
+      - 'requirements.api.txt'
+      - '.github/workflows/build-container.yml'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: creditflow-api
+
+jobs:
+  build:
+    name: Build and push to GHCR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        # Hai lỗi đã mắc ở lần build Factory, xử lý ngay từ đầu:
+        #   1. thiếu namespace owner -> ảnh bị gửi tới Docker Hub, nhận 401
+        #      trông như hỏng quyền GHCR
+        #   2. tên repository viết hoa -> OCI registry từ chối
+        # Workflow file cũng nằm trong paths trigger ở trên, nên sửa workflow
+        # này sẽ tự kích hoạt lại chứ không cần push thủ công.
+        id: meta
+        run: |
+          set -euo pipefail
+          SHA="${GITHUB_SHA}"
+          OWNER="${GITHUB_REPOSITORY_OWNER}"
+          REPO_LC="$(printf '%s' "${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]')"
+          IMAGE="${REGISTRY}/${OWNER}/${REPO_LC}-${IMAGE_NAME}"
+          echo "sha=${SHA}"            >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE}"        >> "$GITHUB_OUTPUT"
+          echo "tag=${IMAGE}:${SHA}"   >> "$GITHUB_OUTPUT"
+          echo "Resolved: ${IMAGE}:${SHA}"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.api
+          push: true
+          tags: ${{ steps.meta.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.title=${{ env.IMAGE_NAME }}
+            org.opencontainers.image.revision=${{ steps.meta.outputs.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Write image evidence
+        run: |
+          mkdir -p evidence
+          cat > evidence/image-evidence.json <<EOF
+          {
+            "registry": "${{ env.REGISTRY }}",
+            "repository": "${{ steps.meta.outputs.image }}",
+            "tag": "${{ steps.meta.outputs.tag }}",
+            "digest": "${{ steps.build.outputs.digest }}",
+            "source_commit": "${{ steps.meta.outputs.sha }}",
+            "build_location": "GitHub Actions",
+            "mode": "serving API only; model bundle from repo, SQLite ledger",
+            "customer_data_included": false,
+            "workflow_run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          cat evidence/image-evidence.json
+
+      # Artifact, KHÔNG phải commit.
+      #
+      # Workflow của MAIA ban đầu cố `git commit` file evidence trong khi job
+      # chỉ có `contents: read`, nên bước đó chắc chắn fail hoặc push hụt —
+      # và fail âm thầm kiểu đó tệ hơn không có bước nào. Ở đây provenance đi
+      # qua artifact, nên job không cần quyền ghi vào repo. Muốn đưa digest vào
+      # docs/evidence thì commit thủ công ở commit sau, tách khỏi đường build.
+      - name: Upload image evidence as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-evidence
+          path: evidence/image-evidence.json
+          retention-days: 90

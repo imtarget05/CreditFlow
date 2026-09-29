@@ -1,0 +1,31 @@
+# Dependency tối thiểu cho CreditFlow serving API (backend.app:app).
+#
+# KHÔNG phải requirements.txt của repo. File đó gồm cả ingest track, LangGraph
+# decision workflow, LLM explanation layer và psycopg cho Neon — tức là mọi thứ
+# cần cho development và pipeline, không chỉ cho việc phục vụ một request.
+#
+# Danh sách này không đoán. Nó là closure thật của import, sinh bởi
+# tools/import_closure.py trên `backend.app`:
+#
+#   MODULE SCOPE (6 gói, app không import được nếu thiếu):
+#     fastapi, pydantic, pandas, numpy, scikit-learn, joblib
+#
+#   LAZY (8 gói, chỉ cần khi endpoint gọi tới): langgraph, langchain-*
+#     (anthropic, google-genai, openai, core), psycopg, httpx, typing_extensions
+#
+# Đáng chú ý: xgboost CÓ trong requirements.txt của repo nhưng KHÔNG xuất hiện
+# ở closure. Bundle `pipeline.joblib` là 3.2KB, đủ nhỏ để chỉ là một sklearn
+# pipeline, nên cài xgboost chỉ để không ai cần tới nó là phí vô nghĩa.
+#
+# Tương tự, langchain và langgraph bị đẩy sang nhóm LAZY: chúng thuộc decision
+# workflow, không thuộc đường /predict. Nếu thiếu, /predict vẫn chạy; các
+# endpoint workflow mới trả lỗi rõ ràng. Đây là ranh giới có chủ đích, không
+# phải giảm chất lượng — cài chúng sẽ thêm hàng trăm MB cho app không dùng.
+fastapi>=0.115
+uvicorn[standard]>=0.27
+pydantic>=2.9
+pandas>=2.2
+numpy>=1.26
+scikit-learn>=1.5
+joblib>=1.4
+python-multipart>=0.0.9

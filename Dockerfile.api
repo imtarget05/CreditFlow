@@ -1,0 +1,45 @@
+# Image cho CreditFlow serving API trên Azure Container Apps.
+#
+# Cùng pipeline với MAIA và Factory: GitHub Actions build, GHCR push, Container
+# Apps pull. Laptop không build image.
+#
+# Self-contained: model bundle đi kèm trong repo (models/production, tổng 28K),
+# ledger là SQLite trong container. Không Neon, không Kafka, không LLM gateway.
+#
+# Về model bundle: `pipeline.joblib` là artifact huấn luyện trên dữ liệu tổng
+# hợp, không phải hồ sơ khách hàng thật, nên đưa lên cloud-demo là an toàn.
+# Manifest + meta đi cùng nó và được `validate_model_bundle()` kiểm tra lúc
+# khởi động — app fail sớm nếu bundle không nhất quán, thay vì phục vụ con số
+# sai một cách âm thầm.
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app
+
+WORKDIR /app
+
+COPY requirements.api.txt ./
+RUN pip install --no-cache-dir -r requirements.api.txt
+
+COPY backend/ ./backend/
+COPY pipeline/ ./pipeline/
+COPY models/ ./models/
+
+RUN useradd --create-home --uid 10002 creditflow \
+    && chown -R creditflow:creditflow /app
+USER creditflow
+
+EXPOSE 8000
+
+# /health/live là probe rẻ nhất. KHÔNG dùng /health ở đây: nó đọc trạng thái
+# model, checkpoint và bundle, đủ để chậm và đủ để OOM trong profile 1GiB.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=45s --retries=3 \
+    CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health/live',timeout=4)"
+
+# CREDITFLOW_ENV=development giữ cho `require_configured_key()` không ném, nên
+# app khởi động được mà không cần API key. Điều đó KHÔNG có nghĩa là auth tắt:
+# `backend/security.py` vẫn chặn request thiếu key ở tầng endpoint. Fail-closed
+# khi production là hành vi cần giữ nguyên và được kiểm ở Phase 19.
+CMD ["python", "-m", "uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000"]

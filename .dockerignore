@@ -1,0 +1,34 @@
+# Không ship bí mật hay trạng thái local vào image.
+#
+# Điểm quan trọng: data/ chứa creditflow_dataset.csv, checkpoints và
+# creditflow_ledger.db. Dockerfile.api chỉ COPY backend/, pipeline/ và
+# models/, nên chúng không lên image — nhưng để `.` làm build context
+# nghĩa là toàn bộ 7.9MB dữ liệu đó vẫn được gửi lên runner mỗi lần build.
+# Loại ở đây để build context nhỏ và để không có đường nào đưa hồ sơ tài
+# chính lên registry một cách tình cờ.
+data/
+colab/
+notebooks/
+frontend/
+.env
+.env.*
+*.db
+*.db-*
+*.pkl
+storage/
+.qdrant_data/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.git/
+.github/
+tests/
+mlruns/
+node_modules/
+.DS_Store
+.idea/
+.vscode/
