@@ -1,0 +1,124 @@
+# CreditFlow API.
+#
+# Cùng lý do như maia-api: đây là hình hại của manifest, không phải bản
+# dựng đầy đủ của ứng dụng. Port 8080 lấy từ docker-compose.yml
+# (services.api.ports: "8081:8080").
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: creditflow-api
+  namespace: portfolio
+  labels:
+    app: creditflow-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: creditflow-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: creditflow-api
+    spec:
+      serviceAccountName: portfolio-api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: api
+        image: hashicorp/http-echo:1.0.0
+        args: ["-text=creditflow-api ok", "-listen=:8080"]
+        ports:
+        - name: http
+          containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: portfolio-config
+        env:
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: portfolio-secrets
+              key: DB_PASSWORD
+        - name: CREDITFLOW_LLM_PROVIDER
+          value: "stub"   # không có LLM gateway trong kind
+        readinessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 2
+          periodSeconds: 3
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "25m"
+            memory: "32Mi"
+          limits:
+            memory: "64Mi"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: creditflow-api
+  namespace: portfolio
+  labels:
+    app: creditflow-api
+spec:
+  type: ClusterIP
+  selector:
+    app: creditflow-api
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+---
+# HPA cho creditflow.
+#
+# autoscaling/v2 (không phải v1) vì nó hỗ trợ nhiều metric và hành vi ổn định
+# hơn. Cần metrics-server trong cụm; kind mặc định KHÔNG có, nên HPA sẽ ở
+# trạng thái <unknown>/50% cho tới khi có metrics-server. Evidence ghi rõ
+# điều này thay vì coi HPA là "đã hoạt động".
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: creditflow-api
+  namespace: portfolio
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: creditflow-api
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  behavior:
+    scaleDown:
+      # Ổn định sau peak: scale up nhanh khi tải tới, nhưng scale down thì
+      # chậm lại, vì cắt quá sớm khiến pod phải scale up lại ngay.
+      stabilizationWindowSeconds: 300
