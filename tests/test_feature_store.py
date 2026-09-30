@@ -348,7 +348,14 @@ def test_ttl_expired_returns_none():
     after_ttl = T0 + 91 * D
     assert o.get("u1", "default_count_2y", as_of=after_ttl) is None, (
         "feature het han phai tra None, khong tra so cu")
-    assert o.has("u1", "default_count_2y") is False or True  # has() theo now_fn
+    # The TTL'd read above is the real assertion. `has()` takes no as_of and is
+    # evaluated against the store's own clock, so it cannot distinguish "not
+    # expired" from "expired" -- the old `is False or True` was a tautology that
+    # asserted nothing. Assert the observable fact instead: the value is gone
+    # from every read path that honours a timestamp.
+    assert o.get("u1", "default_count_2y", as_of=after_ttl) is None
+    assert o.get("u1", "default_count_2y", as_of=T0 + 90 * D) == 2, (
+        "feature chua het han o moc 90 ngay van phai tra gia tri")
 
 
 def test_ttl_fresh_value_survives():
