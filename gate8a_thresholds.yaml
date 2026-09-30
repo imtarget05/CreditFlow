@@ -1,0 +1,31 @@
+# GATE 8A - CREDITFLOW MODEL QUALITY GATE
+#
+# Threshold dinh nghia TRUOC khi chay bat ky candidate nao.
+# Chon threshold sau khi nhin ket qua la test theatre.
+# File nay phai duoc COMMIT truoc, kem candidate, de auditor thay
+# nguong khong bi sua sau khi da biet ket qua.
+GATE_VERSION: "1.0"
+
+# Nguong tren CHIN dataset dong bang nay, khong phai nguong pho quat.
+# normalized_business_cost = (5*FN + 1*FP) / N
+#
+# Baseline duoc duyet tren TEST split (750 dong):
+#   cost=242.0  norm=0.3227  recall=0.70  f1=0.5344
+# Luu y: business_cost=201.0 trong meta.json la ket qua tren VALIDATION
+# split, khong phai test. Hai con so nay khac nhau, de nham se sai.
+# Nguong duoi day dat cho test split, de candidate cung duoc keo ve.
+GATES:
+  max_normalized_business_cost: 0.42
+  min_default_recall: 0.60
+  min_f1: 0.45
+  max_regression_vs_baseline: 0.15
+
+# Negative candidate: nguong mac dinh cua sklearn. Day la regression
+# cuc ky thuc te - mot developer refactor roi vo tinh rot ve default.
+NEGATIVE_THRESHOLD: 0.50
+
+FN_COST: 5.0
+FP_COST: 1.0
+
+DATASET: "data/creditflow_dataset.csv"
+MODEL_DIR: "models/production"
