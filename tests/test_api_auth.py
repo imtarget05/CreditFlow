@@ -111,6 +111,28 @@ def test_correct_key_allows_evidence_endpoints(path):
     assert body["count"] == len(rows)
 
 
+# ---------------------------------------------------------------------------
+# The two formerly public read routes: workflow state + audit trail.
+# Both expose PII-bearing workflow data and must require the shared key.
+# ---------------------------------------------------------------------------
+@pytest.mark.slow
+def test_graph_state_and_audit_require_api_key(authed_client):
+    _profile, started = _start_review_workflow(authed_client)
+    thread_id = started["thread_id"]
+    application_id = started["application_id"]
+
+    for path in (f"/predict/graph/{thread_id}", f"/audit/{application_id}"):
+        r = authed_client.get(path)
+        assert r.status_code == 401, (path, r.text)
+        assert "INVALID_API_KEY" in r.json()["detail"] or "API_KEY_NOT_CONFIGURED" in r.json()["detail"]
+        r = authed_client.get(path, headers={API_KEY_HEADER: "wrong-key"})
+        assert r.status_code == 401, (path, r.text)
+
+    for path in (f"/predict/graph/{thread_id}", f"/audit/{application_id}"):
+        r = authed_client.get(path, headers=AUTH_HEADERS)
+        assert r.status_code == 200, (path, r.text)
+
+
 def test_correct_key_can_read_and_filter_applications():
     r = client.get("/applications", params={"status": "APPROVED"}, headers=AUTH_HEADERS)
     assert r.status_code == 200
@@ -324,7 +346,7 @@ def test_insufficient_authority_is_403_and_writes_no_disbursement(
     db = tmp_path / "ledger_auth.db"
 
     # 120M VND routes to the Risk Committee level of the authority matrix.
-    state = authed_client.get(f"/predict/graph/{thread_id}").json()
+    state = authed_client.get(f"/predict/graph/{thread_id}", headers=AUTH_HEADERS).json()
     assert state["authority_level"] == "RISK_COMMITTEE_L2", state["authority_level"]
 
     monkeypatch.setenv("CREDITFLOW_API_KEY_ROLE", "UNDERWRITER_L1")

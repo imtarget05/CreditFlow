@@ -79,6 +79,34 @@ def _major_minor(version: str) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
+def get_model_artifact_checksum(bundle_dir: Path | None = None) -> str:
+    """Return SHA-256 hash of the production pipeline.joblib artifact."""
+    import hashlib
+    b_dir = Path(bundle_dir or MODEL_FILE.parent)
+    joblib_path = b_dir / "pipeline.joblib"
+    manifest_path = b_dir / "manifest.json"
+    sha256_path = b_dir / "SHA256SUMS"
+
+    if joblib_path.exists():
+        hasher = hashlib.sha256()
+        with open(joblib_path, "rb") as f:
+            while chunk := f.read(65536):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+    if manifest_path.exists():
+        try:
+            m = json.loads(manifest_path.read_text())
+            if "artifacts" in m and "pipeline.joblib" in m["artifacts"]:
+                return m["artifacts"]["pipeline.joblib"]
+        except Exception:
+            pass
+    if sha256_path.exists():
+        for line in sha256_path.read_text().splitlines():
+            if "pipeline.joblib" in line:
+                return line.split()[0].strip()
+    return "unknown"
+
+
 def validate_model_bundle(bundle_dir: Path | None = None) -> dict:
     """Validate all files required to serve one immutable model bundle."""
     bundle_dir = Path(bundle_dir or MODEL_FILE.parent)

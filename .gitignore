@@ -187,3 +187,7 @@ logs/
 data/*.db
 data/*.pkl
 data/*.tmp
+
+.terraform/
+*.tfstate*
+.terraform.lock.hcl

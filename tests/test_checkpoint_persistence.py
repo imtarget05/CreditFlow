@@ -226,7 +226,7 @@ def test_api_approve_works_after_simulated_restart(
 
         # The audit trail survives the restart as well.
         application_id = body["application_id"]
-        r = client.get(f"/audit/{application_id}")
+        r = client.get(f"/audit/{application_id}", headers=AUTH_HEADERS)
         assert r.status_code == 200
         assert r.json()["thread_id"] == thread_id
 
@@ -408,7 +408,7 @@ def test_api_approve_works_after_simated_restart_with_mutating_state(
 
         # The interleaved writer did not corrupt persistence: the audit trail
         # and the approved thread both survive.
-        r = client.get(f"/audit/{body['application_id']}")
+        r = client.get(f"/audit/{body['application_id']}", headers=AUTH_HEADERS)
         assert r.status_code == 200
         assert r.json()["thread_id"] == thread_id
         assert thread_id in saver.threads()

@@ -41,6 +41,12 @@ MID_RISK = {"income":2500000,"age":32,"employment_years":4,"loan_amount":1200000
 HIGH_RISK = {"income":2500000,"age":32,"employment_years":4,"loan_amount":12000000,"loan_term":36,"existing_debt":3500000,"credit_history":5,"previous_defaults":0}
 
 
+@pytest.fixture(autouse=True)
+def _auth_env(monkeypatch):
+    """Bind the test API key so the auth-protected read endpoints answer."""
+    configure_auth_env(monkeypatch)
+
+
 # ---------------------------------------------------------------------------
 # Policy engine tests
 # ---------------------------------------------------------------------------
@@ -415,7 +421,7 @@ def test_graph_endpoint_get_state(monkeypatch):
     body = r.json()
     thread_id = body["thread_id"]
 
-    r2 = client.get("/predict/graph/" + thread_id)
+    r2 = client.get("/predict/graph/" + thread_id, headers=AUTH_HEADERS)
     assert r2.status_code == 200
     body2 = r2.json()
     assert body2["thread_id"] == thread_id
@@ -423,7 +429,7 @@ def test_graph_endpoint_get_state(monkeypatch):
 
 
 def test_graph_endpoint_get_state_not_found():
-    r = client.get("/predict/graph/run-nonexistent123")
+    r = client.get("/predict/graph/run-nonexistent123", headers=AUTH_HEADERS)
     assert r.status_code == 404
 
 
@@ -435,7 +441,7 @@ def test_graph_endpoint_audit_trail(monkeypatch):
     body = r.json()
     app_id = body["application_id"]
 
-    r2 = client.get("/audit/" + app_id)
+    r2 = client.get("/audit/" + app_id, headers=AUTH_HEADERS)
     assert r2.status_code == 200
     body2 = r2.json()
     assert body2["application_id"] == app_id
@@ -444,7 +450,7 @@ def test_graph_endpoint_audit_trail(monkeypatch):
 
 
 def test_graph_endpoint_audit_not_found():
-    r = client.get("/audit/APP-nonexistent123")
+    r = client.get("/audit/APP-nonexistent123", headers=AUTH_HEADERS)
     assert r.status_code == 404
 
 

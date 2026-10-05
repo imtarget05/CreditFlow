@@ -49,6 +49,7 @@ from pipeline.storage.ledger import (
     approve_pending_application,
     update_application_status,
     get_application_by_thread,
+    get_application_by_id,
     get_audit_trail_record,
     record_inference,
     find_idempotent_approval,
@@ -308,6 +309,26 @@ def drift_report():
     reference = json.loads(REFERENCE_STATS.read_text())
     recent = pd.DataFrame(list(prediction_window))
     report = detect_drift(reference, recent)
+
+    if report.get("status") == "DRIFT_DETECTED":
+        try:
+            from pipeline.storage.ledger import emit_domain_event
+            drifted_cols = [
+                f for f, v in report.get("features", {}).items()
+                if isinstance(v, dict) and v.get("status") == "DRIFT_DETECTED"
+            ]
+            emit_domain_event(
+                "ModelDriftDetected",
+                {
+                    "status": "DRIFT_DETECTED",
+                    "drifted_features": drifted_cols,
+                    "n_recent": report.get("n_recent"),
+                },
+                destination="drift_alerts",
+            )
+        except Exception:
+            metrics.error()
+
     return {
         "drift": report,
         "window_max": prediction_window.maxlen,
@@ -790,7 +811,10 @@ def approve_graph_workflow(
 
 
 @app.get("/predict/graph/{thread_id}")
-def get_graph_state(thread_id: str):
+def get_graph_state(
+    thread_id: str,
+    principal: Principal = Security(require_principal),
+):
     """Get the current state of a workflow (including paused workflows)."""
     graph = _get_graph(thread_id)
     run_config = {"configurable": {"thread_id": thread_id}}
@@ -825,7 +849,10 @@ def get_graph_state(thread_id: str):
 
 
 @app.get("/audit/{application_id}")
-def get_audit_trail(application_id: str):
+def get_audit_trail(
+    application_id: str,
+    principal: Principal = Security(require_principal),
+):
     """Get the audit trail for a completed or in-progress workflow.
 
     First queries the SQLite ledger in O(1) by application_id or thread_id.
@@ -900,4 +927,264 @@ def list_disbursement_ledger(principal: Principal = Security(require_principal))
         "all_hashes_valid": all(bool(r.get("hash_valid")) for r in rows),
         "disbursements": rows,
     }
+
+
+@app.post("/applications")
+@app.post("/api/applications")
+def create_loan_application(
+    body: dict,
+    principal: Principal = Security(require_principal),
+):
+    """Create and start a loan application workflow.
+
+    Accepts customer profile data directly or under {"customer_data": ...}.
+    """
+    customer_data = body.get("customer_data", body)
+    req = GraphStartRequest(customer_data=customer_data)
+    return start_graph_workflow(req)
+
+
+@app.get("/applications/{application_id}")
+@app.get("/api/applications/{application_id}")
+def get_loan_application(
+    application_id: str,
+    principal: Principal = Security(require_principal),
+):
+    """Fetch loan application by id, application_id, or thread_id."""
+    app_row = get_application_by_id(application_id)
+    if app_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Application {application_id} not found",
+        )
+    return app_row
+
+
+@app.post("/applications/{application_id}/documents")
+@app.post("/api/applications/{application_id}/documents")
+def upload_application_documents(
+    application_id: str,
+    body: dict,
+    principal: Principal = Security(require_principal),
+):
+    """Attach document metadata to a loan application and persist it.
+
+    Stores one row in the ``application_documents`` ledger table keyed by
+    the canonical application_id, so the record survives restarts and is
+    listable via ``GET .../documents``. Only metadata is stored (no file
+    bytes); the file name is sanitised to a base name.
+    """
+    from pipeline.storage.ledger import record_document as _record_doc
+    from pipeline.storage.ledger import emit_domain_event as _emit_event
+
+    app_row = get_application_by_id(application_id)
+    if app_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Application {application_id} not found",
+        )
+    canonical_id = app_row.get("application_id") or application_id
+    import uuid
+    doc_id = f"doc_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+    try:
+        stored = _record_doc(
+            application_id=canonical_id,
+            document_id=doc_id,
+            document_type=(body or {}).get("document_type", "income_verification"),
+            file_name=(body or {}).get("file_name", "document.pdf"),
+            uploaded_by=principal.identity,
+            file_content=(body or {}).get("file_content") or (body or {}).get("content_base64"),
+            file_size_bytes=(body or {}).get("file_size_bytes"),
+            checksum_sha256=(body or {}).get("checksum_sha256"),
+            mime_type=(body or {}).get("mime_type", "application/pdf"),
+        )
+        _emit_event(
+            "DocumentUploaded",
+            {
+                "application_id": canonical_id,
+                "document_id": doc_id,
+                "document_type": stored["document_type"],
+                "checksum_sha256": stored["checksum_sha256"],
+                "file_size_bytes": stored["file_size_bytes"],
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return {"status": "uploaded", **stored}
+
+
+@app.get("/applications/{application_id}/documents")
+@app.get("/api/applications/{application_id}/documents")
+def list_application_documents(
+    application_id: str,
+    principal: Principal = Security(require_principal),
+):
+    """List persisted document metadata for a loan application."""
+    from pipeline.storage.ledger import list_documents as _list_docs
+
+    app_row = get_application_by_id(application_id)
+    if app_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Application {application_id} not found",
+        )
+    canonical_id = app_row.get("application_id") or application_id
+    docs = _list_docs(canonical_id)
+    return {"application_id": canonical_id, "count": len(docs), "documents": docs}
+
+
+@app.post("/applications/{application_id}/score")
+@app.post("/api/applications/{application_id}/score")
+def score_loan_application(
+    application_id: str,
+    body: dict | None = None,
+    principal: Principal = Security(require_principal),
+):
+    """Thin adapter over /predict service: score an application."""
+    if body and "income" in body:
+        pred_req = PredictRequest(**body)
+        return predict(pred_req)
+
+    app_row = get_application_by_id(application_id)
+    if app_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Application {application_id} not found",
+        )
+    cust_data = app_row.get("customer_data") or {}
+    pred_req = PredictRequest(**cust_data)
+    return predict(pred_req)
+
+
+@app.post("/applications/{application_id}/decision")
+@app.post("/api/applications/{application_id}/decision")
+def decide_loan_application(
+    application_id: str,
+    body: dict,
+    principal: Principal = Security(require_principal),
+):
+    """Make human approval or rejection decision with cryptographic snapshot evidence."""
+    from pipeline.storage.ledger import (
+        get_decision_snapshot,
+        record_decision_snapshot,
+        emit_domain_event,
+    )
+    from backend.predict_service import get_model_artifact_checksum
+
+    app_row = get_application_by_id(application_id)
+    if app_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Application {application_id} not found",
+        )
+    thread_id = app_row.get("thread_id") or application_id
+    canonical_id = app_row.get("application_id") or application_id
+
+    # Anti-double-click / idempotency gate
+    idem_key = (body.get("idempotency_key") or "").strip()
+    existing_snapshot = get_decision_snapshot(canonical_id)
+    if existing_snapshot is not None and (idem_key or app_row.get("status") in ("APPROVED", "REJECTED")):
+        return {
+            "status": "decided",
+            "decision": existing_snapshot["decision"],
+            "replay": True,
+            **existing_snapshot,
+        }
+
+    # Determine action
+    is_approved = (
+        body.get("approved") is True
+        or str(body.get("action", "")).lower() in ("approve", "approved", "accept", "yes")
+        or str(body.get("decision", "")).upper() == "APPROVE"
+    )
+    action = "approve" if is_approved else "reject"
+    notes = body.get("notes") or body.get("note") or body.get("reason") or f"Manual review: {action}"
+
+    approval_req = GraphApprovalRequest(
+        action=action,
+        note=notes,
+        idempotency_key=idem_key or f"dec-{canonical_id}",
+    )
+    res = approve_graph_workflow(thread_id, approval_req, principal=principal)
+
+    # Persist decision snapshot evidence
+    model_version = getattr(app.state, "meta", {}).get("version", "v1.0.0")
+    model_checksum = get_model_artifact_checksum()
+    risk_score = float(app_row.get("risk_score") or 0.0)
+
+    snapshot = record_decision_snapshot(
+        application_id=canonical_id,
+        thread_id=thread_id,
+        decision="APPROVE" if is_approved else "REJECT",
+        model_version=model_version,
+        model_checksum_sha256=model_checksum,
+        features_version="v1",
+        prediction_probability=risk_score,
+        reviewer=principal.identity,
+        reason=notes,
+    )
+
+    emit_domain_event(
+        "ApplicationApproved" if is_approved else "ApplicationRejected",
+        {
+            "application_id": canonical_id,
+            "decision": snapshot["decision"],
+            "decision_id": snapshot["decision_id"],
+            "snapshot_hash": snapshot["snapshot_hash"],
+            "reviewer": principal.identity,
+        },
+    )
+
+    return {
+        "status": "decided",
+        "decision": snapshot["decision"],
+        "replay": bool(res.get("replay")),
+        **snapshot,
+        "workflow_result": res,
+    }
+
+
+@app.get("/applications/{application_id}/explanation")
+@app.get("/api/applications/{application_id}/explanation")
+def explain_loan_application(
+    application_id: str,
+    principal: Principal = Security(require_principal),
+):
+    """Explanation adapter: return risk factors and model explanation."""
+    app_row = get_application_by_id(application_id)
+    if app_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Application {application_id} not found",
+        )
+    cust_data = app_row.get("customer_data") or {}
+    if cust_data and "income" in cust_data:
+        pred_req = PredictRequest(**cust_data)
+        res = predict(pred_req)
+        return {
+            "application_id": application_id,
+            "risk_score": app_row.get("risk_score"),
+            "risk_level": app_row.get("risk_level"),
+            "decision": app_row.get("decision"),
+            "reasons": res.reasons,
+            "model_version": res.model_version,
+            "model_name": res.model_name,
+        }
+    return {
+        "application_id": application_id,
+        "risk_score": app_row.get("risk_score"),
+        "risk_level": app_row.get("risk_level"),
+        "decision": app_row.get("decision"),
+        "reasons": [],
+    }
+
+
+@app.get("/applications/{application_id}/audit")
+@app.get("/api/applications/{application_id}/audit")
+def get_application_audit(
+    application_id: str,
+    principal: Principal = Security(require_principal),
+):
+    """Alias for GET /audit/{application_id}."""
+    return get_audit_trail(application_id)
 # ---------------------------------------------------------------------------

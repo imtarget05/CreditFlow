@@ -139,6 +139,41 @@ def init_db(db_path: Path | None = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_inference_logs_id
                 ON inference_logs(id DESC);
 
+            CREATE TABLE IF NOT EXISTS application_documents (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                application_id  TEXT NOT NULL,             -- loan_applications.application_id
+                document_id     TEXT NOT NULL UNIQUE,
+                document_type   TEXT NOT NULL,
+                file_name       TEXT NOT NULL,             -- sanitised base name only, never a path
+                uploaded_by     TEXT NOT NULL DEFAULT '',
+                uploaded_at     TEXT NOT NULL,
+                checksum_sha256 TEXT NOT NULL DEFAULT '',
+                file_size_bytes INTEGER NOT NULL DEFAULT 0,
+                mime_type       TEXT NOT NULL DEFAULT 'application/pdf',
+                storage_path    TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_documents_application
+                ON application_documents(application_id);
+
+            CREATE TABLE IF NOT EXISTS decision_snapshots (
+                decision_id            TEXT PRIMARY KEY,
+                application_id         TEXT NOT NULL,
+                thread_id              TEXT NOT NULL,
+                decision               TEXT NOT NULL,
+                model_version          TEXT NOT NULL,
+                model_checksum_sha256  TEXT NOT NULL,
+                features_version       TEXT NOT NULL DEFAULT 'v1',
+                prediction_probability REAL NOT NULL,
+                reviewer               TEXT NOT NULL,
+                reason                 TEXT NOT NULL,
+                decided_at             TEXT NOT NULL,
+                snapshot_hash          TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_decision_snapshots_app
+                ON decision_snapshots(application_id);
+
             CREATE TABLE IF NOT EXISTS idempotency_keys (
                 caller_scope TEXT NOT NULL,
                 idem_key     TEXT NOT NULL,
@@ -172,6 +207,10 @@ def init_db(db_path: Path | None = None) -> None:
             "ALTER TABLE loan_applications ADD COLUMN approver_id TEXT",
             "ALTER TABLE loan_applications ADD COLUMN idempotency_key TEXT",
             "ALTER TABLE disbursements ADD COLUMN idempotency_key TEXT",
+            "ALTER TABLE application_documents ADD COLUMN checksum_sha256 TEXT DEFAULT ''",
+            "ALTER TABLE application_documents ADD COLUMN file_size_bytes INTEGER DEFAULT 0",
+            "ALTER TABLE application_documents ADD COLUMN mime_type TEXT DEFAULT 'application/pdf'",
+            "ALTER TABLE application_documents ADD COLUMN storage_path TEXT DEFAULT ''",
         ):
             try:
                 conn.execute(_ddl)
@@ -387,6 +426,24 @@ def get_application_by_thread(
     return _to_row(row)
 
 
+def get_application_by_id(
+    app_id: int | str, db_path: Path | None = None
+) -> dict | None:
+    """Fetch the application row by numeric id, application_id, or thread_id."""
+    with _connect(db_path) as conn:
+        if isinstance(app_id, int) or (isinstance(app_id, str) and str(app_id).isdigit()):
+            row = conn.execute(
+                "SELECT * FROM loan_applications WHERE id = ? OR application_id = ? OR thread_id = ?",
+                (int(app_id), str(app_id), str(app_id)),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM loan_applications WHERE application_id = ? OR thread_id = ?",
+                (str(app_id), str(app_id)),
+            ).fetchone()
+    return _to_row(row)
+
+
 def update_application_status(
     thread_id: str,
     status: str,
@@ -429,8 +486,255 @@ def update_application_status(
         return cur.rowcount > 0
 
 
-def get_audit_trail_record(
-    app_or_thread_id: str, db_path: Path | None = None
+DOCUMENT_TYPES = frozenset(
+    {
+        "income_verification",
+        "identity",
+        "bank_statement",
+        "collateral",
+        "credit_report",
+        "other",
+    }
+)
+
+
+def sanitise_file_name(raw: str) -> str:
+    """Reduce a client-supplied file name to a safe base name.
+
+    Strips directories, rejects empty/blank names and path separators that
+    survive basenaming (defence against ``..`` / absolute-path smuggling —
+    only metadata is stored, but the name must still be traversal-free).
+    Raises ValueError on an unacceptable name.
+    """
+    import os as _os
+
+    name = (_os.path.basename((raw or "").strip())).strip()
+    if not name or name in (".", "..") or "/" in name or "\\" in name:
+        raise ValueError(f"invalid file_name: {raw!r}")
+    if len(name) > 255:
+        raise ValueError("file_name exceeds 255 characters")
+    return name
+
+
+def record_document(
+    application_id: str,
+    document_id: str,
+    document_type: str,
+    file_name: str,
+    uploaded_by: str = "",
+    file_content: bytes | str | None = None,
+    file_size_bytes: int | None = None,
+    checksum_sha256: str | None = None,
+    mime_type: str = "application/pdf",
+    db_path: Path | None = None,
+) -> dict:
+    """Persist one document row for an application with SHA-256 checksum and size.
+
+    Validates document type, sanitises file name, computes cryptographic digest,
+    and stores physical artifact if content is provided.
+    """
+    doc_type = (document_type or "income_verification").strip().lower()
+    if doc_type not in DOCUMENT_TYPES:
+        raise ValueError(
+            f"invalid document_type: {document_type!r}; "
+            f"expected one of {', '.join(sorted(DOCUMENT_TYPES))}"
+        )
+    safe_name = sanitise_file_name(file_name)
+    now = _now_iso()
+
+    storage_path = ""
+    if file_content is not None:
+        content_bytes = (
+            file_content.encode("utf-8")
+            if isinstance(file_content, str)
+            else file_content
+        )
+        digest = hashlib.sha256(content_bytes).hexdigest()
+        size_bytes = len(content_bytes)
+
+        storage_dir = ROOT / "data" / "documents" / application_id
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        target_file = storage_dir / f"{document_id}_{safe_name}"
+        target_file.write_bytes(content_bytes)
+        storage_path = str(target_file)
+    else:
+        digest = checksum_sha256 or hashlib.sha256(
+            f"{application_id}:{document_id}:{safe_name}:{now}".encode()
+        ).hexdigest()
+        size_bytes = file_size_bytes or 0
+
+    with _write_lock, _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO application_documents
+                (application_id, document_id, document_type, file_name,
+                 uploaded_by, uploaded_at, checksum_sha256, file_size_bytes, mime_type, storage_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (application_id, document_id, doc_type, safe_name, uploaded_by, now, digest, size_bytes, mime_type, storage_path),
+        )
+    return {
+        "document_id": document_id,
+        "application_id": application_id,
+        "document_type": doc_type,
+        "file_name": safe_name,
+        "uploaded_by": uploaded_by,
+        "uploaded_at": now,
+        "checksum_sha256": digest,
+        "file_size_bytes": size_bytes,
+        "mime_type": mime_type,
+    }
+
+
+def list_documents(
+    application_id: str, db_path: Path | None = None
+) -> list[dict]:
+    """List persisted document rows for an application (oldest first)."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT document_id, application_id, document_type, file_name,
+                   uploaded_by, uploaded_at, checksum_sha256, file_size_bytes, mime_type
+            FROM application_documents
+            WHERE application_id = ?
+            ORDER BY id ASC
+            """,
+            (application_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def compute_decision_snapshot_hash(
+    decision_id: str,
+    application_id: str,
+    decision: str,
+    model_version: str,
+    model_checksum_sha256: str,
+    prediction_probability: float,
+    reviewer: str,
+    decided_at: str,
+) -> str:
+    body = (
+        f"{decision_id}|{application_id}|{decision}|{model_version}|"
+        f"{model_checksum_sha256}|{prediction_probability:.4f}|{reviewer}|{decided_at}"
+    )
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def record_decision_snapshot(
+    application_id: str,
+    thread_id: str,
+    decision: str,
+    model_version: str,
+    model_checksum_sha256: str,
+    prediction_probability: float,
+    reviewer: str,
+    reason: str,
+    features_version: str = "v1",
+    decision_id: str | None = None,
+    decided_at: str | None = None,
+    db_path: Path | None = None,
+) -> dict:
+    import uuid
+    dec_id = decision_id or f"dec_{uuid.uuid4().hex[:12]}"
+    now = decided_at or _now_iso()
+    snapshot_hash = compute_decision_snapshot_hash(
+        dec_id, application_id, decision, model_version,
+        model_checksum_sha256, prediction_probability, reviewer, now
+    )
+
+    with _write_lock, _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO decision_snapshots
+                (decision_id, application_id, thread_id, decision, model_version,
+                 model_checksum_sha256, features_version, prediction_probability,
+                 reviewer, reason, decided_at, snapshot_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                dec_id, application_id, thread_id, decision, model_version,
+                model_checksum_sha256, features_version, prediction_probability,
+                reviewer, reason, now, snapshot_hash
+            ),
+        )
+        conn.commit()
+
+    return {
+        "decision_id": dec_id,
+        "application_id": application_id,
+        "thread_id": thread_id,
+        "decision": decision,
+        "model_version": model_version,
+        "model_checksum_sha256": model_checksum_sha256,
+        "features_version": features_version,
+        "prediction_probability": prediction_probability,
+        "reviewer": reviewer,
+        "reason": reason,
+        "decided_at": now,
+        "snapshot_hash": snapshot_hash,
+    }
+
+
+def get_decision_snapshot(
+    app_or_decision_id: str, db_path: Path | None = None
+) -> dict | None:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT decision_id, application_id, thread_id, decision, model_version,
+                   model_checksum_sha256, features_version, prediction_probability,
+                   reviewer, reason, decided_at, snapshot_hash
+            FROM decision_snapshots
+            WHERE application_id = ? OR decision_id = ? OR thread_id = ?
+            ORDER BY decided_at DESC LIMIT 1
+            """,
+            (app_or_decision_id, app_or_decision_id, app_or_decision_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def verify_decision_snapshot_hash(snapshot: dict) -> bool:
+    expected = compute_decision_snapshot_hash(
+        snapshot["decision_id"],
+        snapshot["application_id"],
+        snapshot["decision"],
+        snapshot["model_version"],
+        snapshot["model_checksum_sha256"],
+        float(snapshot["prediction_probability"]),
+        snapshot["reviewer"],
+        snapshot["decided_at"],
+    )
+    return hmac.compare_digest(expected, snapshot.get("snapshot_hash", ""))
+
+
+def emit_domain_event(
+    event_type: str,
+    payload: dict,
+    destination: str = "domain_events",
+    db_path: Path | None = None,
+) -> str:
+    import uuid
+    event_id = f"evt_{event_type}_{uuid.uuid4().hex[:12]}"
+    now = _now_iso()
+    with _write_lock, _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO outbox_events
+                (event_id, destination, payload, version, attempts, next_retry_at, delivered_at)
+            VALUES (?, ?, ?, 'v1', 0, '', '')
+            """,
+            (
+                event_id,
+                destination,
+                json.dumps({"event_type": event_type, "occurred_at": now, **payload}, default=str),
+            ),
+        )
+        conn.commit()
+    return event_id
+
+
+def get_audit_trail_record(    app_or_thread_id: str, db_path: Path | None = None
 ) -> dict | None:
     """Fetch audit trail for an application_id or thread_id in O(1)."""
     with _connect(db_path) as conn:
