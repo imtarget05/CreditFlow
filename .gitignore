@@ -191,3 +191,6 @@ data/*.tmp
 .terraform/
 *.tfstate*
 .terraform.lock.hcl
+
+# Runtime document artifacts (upload/applications flow; never committed).
+data/documents/
