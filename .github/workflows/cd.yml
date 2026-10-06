@@ -136,19 +136,44 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-  notify-render:
-    name: Trigger Render redeploy (optional webhook)
+  deploy-backend-render:
+    name: Deploy backend to Render (deploy hook + readiness + smoke)
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     needs: [build-api-image, deploy-frontend-pages]
     steps:
-      - name: Trigger Render backend redeploy
+      - uses: actions/checkout@v4
+
+      - name: Trigger Render deploy via deploy hook
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
         run: |
-          # Render auto-deploys from GitHub native integration by default.
-          # If you set up a Render webhook URL in repo Settings → Secrets,
-          # uncomment the curl below to trigger a redeploy programmatically:
-          #
-          # curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}" \
-          #   -H "Content-Type: application/json" \
-          #   -d '{"branch": "main"}'
-          echo "Render redeploy skipped — use Render's native GitHub integration or set RENDER_DEPLOY_HOOK secret"
+          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK secret is not configured. The previous job only echoed success while deploying nothing; a real deploy requires the Render deploy-hook URL (Render dashboard -> creditflow-api service -> Deploy Hook) as a repository secret."
+            exit 1
+          fi
+          curl -sf -X POST "$RENDER_DEPLOY_HOOK" -H "Content-Type: application/json" -d '{"branch": "main"}'
+          echo "Render deploy hook triggered."
+
+      - name: Poll production readiness
+        env:
+          API_BASE: ${{ vars.VITE_API_BASE || 'https://creditflow-api-ko2h.onrender.com' }}
+        run: |
+          echo "Polling ${API_BASE}/health/ready (Render free-tier cold starts up to ~60s)..."
+          for i in $(seq 1 30); do
+            if curl -sf --max-time 10 "${API_BASE}/health/ready" > /dev/null 2>&1 \
+               || curl -sf --max-time 10 "${API_BASE}/health/live" > /dev/null 2>&1; then
+              echo "Production backend ready."
+              exit 0
+            fi
+            echo "Attempt $i/30 — not ready yet"
+            sleep 10
+          done
+          echo "::error::Production backend did not become ready within 5 minutes"
+          exit 1
+
+      - name: Production smoke (health, CORS, auth gate, scoring)
+        env:
+          CREDITFLOW_SMOKE_BASE: ${{ vars.VITE_API_BASE || 'https://creditflow-api-ko2h.onrender.com' }}
+          CREDITFLOW_SMOKE_API_KEY: ${{ secrets.CREDITFLOW_API_KEY }}
+        run: python3 scripts/smoke_production.py
