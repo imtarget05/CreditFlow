@@ -10,7 +10,7 @@ GitHub Pages (frontend) ──→ Render (FastAPI backend) ──→ Cloudflare 
 | Component | Platform | URL |
 |-----------|----------|-----|
 | Frontend (React/Vite SPA) | GitHub Pages | `https://imtarget05.github.io/CreditFlow/` |
-| Backend (FastAPI + model) | Render Free Tier | `https://creditflow-api-ko2h.onrender.com` |
+| Backend (FastAPI + model) | Render Free Tier | `https://creditflow-api-9z1v.onrender.com` |
 | LLM explanations | Cloudflare Workers AI | REST API (called by backend, NOT Pages) |
 | Docker images | GHCR | `ghcr.io/<owner>/creditflow/creditflow-{api,web}` |
 
@@ -41,15 +41,15 @@ GitHub Pages (frontend) ──→ Render (FastAPI backend) ──→ Cloudflare 
 ### Verify Backend
 
 ```bash
-curl https://creditflow-api-ko2h.onrender.com/health
+curl https://creditflow-api-9z1v.onrender.com/health
 # {"status":"ok","model_loaded":true,"model_version":"...","model_name":"..."}
 
-curl -X POST https://creditflow-api-ko2h.onrender.com/predict \
+curl -X POST https://creditflow-api-9z1v.onrender.com/predict \
   -H "Content-Type: application/json" \
   -d '{"income":8000000,"age":32,"employment_years":4,"loan_amount":12000000,"loan_term":36,"existing_debt":3500000,"credit_history":5,"previous_defaults":0}'
 # 200 + {"risk_probability":...,"decision":"APPROVE","model_version":"...","reasons":[...]}
 
-curl https://creditflow-api-ko2h.onrender.com/model/info
+curl https://creditflow-api-9z1v.onrender.com/model/info
 # {"model_version":"...","model_name":"..."}
 ```
 
@@ -61,7 +61,7 @@ curl https://creditflow-api-ko2h.onrender.com/model/info
    - Upload `frontend/dist` via `actions/upload-pages-artifact@v3`
    - Deploy via `actions/deploy-pages@v4` (branch `gh-pages`)
 3. `frontend/vite.config.js` giữ `base: '/CreditFlow/'` để routing/assets đúng sub-path.
-4. `VITE_API_BASE=https://creditflow-api-ko2h.onrender.com` (baked at build time — build lại nếu đổi URL backend).
+4. `VITE_API_BASE=https://creditflow-api-9z1v.onrender.com` (baked at build time — build lại nếu đổi URL backend).
 5. SPA fallback: `frontend/public/404.html` (redirect mọi deep path lạ về `/CreditFlow/`) đã commit — xử lý unknown-path refresh trên GitHub Pages. Lưu ý: GitHub Pages trả HTTP 404 kèm nội dung trang redirect (browser chạy JS sẽ chuyển về app). `_redirects` chỉ là di sản Cloudflare Pages, không có tác dụng trên GitHub Pages — giữ lại để tham chiếu, không dùng cho fallback.
 
 ### Verify Frontend
@@ -92,7 +92,7 @@ Workers AI chỉ phục vụ GenAI explain — không còn liên quan tới fron
 ### Verify
 
 ```bash
-curl https://creditflow-api-ko2h.onrender.com/llm/info
+curl https://creditflow-api-9z1v.onrender.com/llm/info
 # {"provider":"cloudflare","model":"@cf/meta/llama-3.2-1b-instruct","prompt_version":"...","configured":true}
 ```
 
@@ -115,7 +115,7 @@ If `configured` is `false`, check the Render env vars are set correctly.
 
 | Variable | Required | Default | Notes |
 |----------|----------|---------|-------|
-| `VITE_API_BASE` | Yes | — | Baked at build time; must point to Render URL (`https://creditflow-api-ko2h.onrender.com`); local fallback is `/api`. Set via repo var `VITE_API_BASE` in `cd.yml` (defaults to the Render URL) |
+| `VITE_API_BASE` | Yes | — | Baked at build time; must point to Render URL (`https://creditflow-api-9z1v.onrender.com`); local fallback is `/api`. Set via repo var `VITE_API_BASE` in `cd.yml` (defaults to the Render URL) |
 | `VITE_API_KEY` | For ledger/approve tabs | — | Baked at build time from repo secret `CREDITFLOW_API_KEY` — **must equal the Render `CREDITFLOW_API_KEY` value**. Absent => `/applications`, `/disbursements`, approve calls 401 by design (fail-closed, see `backend/security.py`) |
 
 ## Security Notes
@@ -147,7 +147,7 @@ Docker images `creditflow-api` / `creditflow-web` cũng được auto-push lên 
 | Issue | Fix |
 |-------|-----|
 | Frontend 404 on refresh (unknown deep path) | Đã xử lý: `frontend/public/404.html` (redirect về `/CreditFlow/`) + bước copy trong `cd.yml` (`cp public/404.html dist/404.html`) đảm bảo artifact có 404.html. Đây là giới hạn đã biết của GitHub Pages: unknown deep path trả HTTP 404 **cùng nội dung trang redirect** (browser có JS tự chuyển về app) — app là single-view không router nên không mất trạng thái route. `_redirects` là file Cloudflare-Pages-only, GitHub Pages bỏ qua — giữ lại chỉ để tham chiếu |
-| Frontend can't reach API | Confirm `VITE_API_BASE` lúc build trỏ đúng Render URL (`https://creditflow-api-ko2h.onrender.com`); build lại sau khi đổi env |
+| Frontend can't reach API | Confirm `VITE_API_BASE` lúc build trỏ đúng Render URL (`https://creditflow-api-9z1v.onrender.com`); build lại sau khi đổi env |
 | Backend 502 / request đầu ~30s | Render free-tier cold-start sau sleep — chờ rồi retry 1 lần; nếu vẫn 502, check logs in Render dashboard, ensure `requirements.txt` installs cleanly |
 | CORS errors in browser | Set `CREDITFLOW_CORS_ORIGINS=https://imtarget05.github.io` on Render (dashboard, comma-separated; `render.yaml` now defaults to it), redeploy, then hard-refresh the Pages app. Never use `*` — the API refuses to start with it |
 | LLM explanations return template | Verify `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in Render dashboard, then re-check `/llm/info` (`configured` phải `true`) |

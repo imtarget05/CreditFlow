@@ -22,7 +22,7 @@ REDIRECTS_SRC = FRONTEND_DIR / "public" / "_redirects"
 REDIRECTS_BUILD = FRONTEND_DIR / "dist" / "_redirects"
 DEPLOY_DOCS = ROOT / "docs" / "deployment.md"
 
-RENDER_BASE = "https://creditflow-api-ko2h.onrender.com"
+RENDER_BASE = "https://creditflow-api-9z1v.onrender.com"
 # Money fields follow the API money-unit contract (VND), so this sample stays
 # valid against both the legacy and the contract-enforcing backend.
 SAMPLE_PAYLOAD = {

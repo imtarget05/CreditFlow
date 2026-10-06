@@ -125,7 +125,7 @@ This is the single most damaging item in the repository. A money-moving endpoint
 
 - **No authentication tests**, because there is no authentication. Once S1 is fixed, the RBAC matrix needs its own tests before it can be claimed.
 - **`init_db_pg` is untested and uncalled** (H1). Either wire it and test it, or delete it. Dead code that looks like a feature is worse than no code.
-- `tests/test_deploy_pages.py:84-113` performs **real HTTP calls to `https://creditflow-api-ko2h.onrender.com`** (`:25`). It is correctly marked `@pytest.mark.integration` and excluded by CI (`ci.yml:39`), but it is a live-network test against a URL that a future reader will assume still works.
+- `tests/test_deploy_pages.py:84-113` performs **real HTTP calls to `https://creditflow-api-9z1v.onrender.com`** (`:25`). It is correctly marked `@pytest.mark.integration` and excluded by CI (`ci.yml:39`), but it is a live-network test against a URL that a future reader will assume still works.
 - `<10` tests are file/CLI-shape checks rather than behaviour (`test_deploy_pages.py:59-83`, `test_verify_deploy.py:16,76`). Acceptable, but do not quote them as coverage.
 - No load/concurrency test on the `approve` path, which is the one that matters.
 

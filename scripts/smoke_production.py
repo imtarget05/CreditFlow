@@ -17,7 +17,7 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE = (os.environ.get("CREDITFLOW_SMOKE_BASE") or "https://creditflow-api-ko2h.onrender.com").rstrip("/")
+BASE = (os.environ.get("CREDITFLOW_SMOKE_BASE") or "https://creditflow-api-9z1v.onrender.com").rstrip("/")
 ORIGIN = os.environ.get("CREDITFLOW_SMOKE_ORIGIN") or "https://imtarget05.github.io"
 API_KEY = os.environ.get("CREDITFLOW_SMOKE_API_KEY") or ""
 FAILS = []

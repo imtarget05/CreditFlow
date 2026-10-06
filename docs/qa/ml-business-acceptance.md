@@ -33,7 +33,7 @@ CREDITFLOW_LLM_PROVIDER='' \
 .venv/bin/python -m pytest tests/ -q -m 'slow or integration' -rs
 ```
 
-The `integration` group includes live `https://creditflow-api-ko2h.onrender.com`
+The `integration` group includes live `https://creditflow-api-9z1v.onrender.com`
 `/health` and `/predict` calls, so that pass depends on the deployed Render service
 being awake, not only on this worktree. No test hits a live LLM provider: provider
 paths are exercised through monkeypatched transport.

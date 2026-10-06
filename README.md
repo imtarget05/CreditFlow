@@ -19,7 +19,7 @@ Designed with enterprise requirements in mind, it features tamper-evident audit 
 | Component | URL | State |
 |---|---|---|
 | Frontend (GitHub Pages) | https://imtarget05.github.io/CreditFlow/ | Deployed by `cd.yml` (`actions/deploy-pages`) |
-| API (Render, canonical) | https://creditflow-api-ko2h.onrender.com | `/health/live`, `/health/ready`, `/model/info` respond (logistic_regression_v001, threshold 0.20); business endpoints return `401` until `CREDITFLOW_API_KEY` is configured — fail-closed by design |
+| API (Render, canonical) | https://creditflow-api-9z1v.onrender.com | `/health/live`, `/health/ready`, `/model/info` respond (logistic_regression_v001, threshold 0.20); business endpoints return `401` until `CREDITFLOW_API_KEY` is configured — fail-closed by design |
 
 Owner actions (dashboards — pipeline code is ready):
 
