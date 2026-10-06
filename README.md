@@ -208,7 +208,7 @@ key (403, no disbursement written).
 ├── models/production/      # Serialized pipeline + benchmark results + meta
 ├── notebooks/              # EDA + model benchmark notebooks
 ├── scripts/                # Training, deploy verification, eval
-├── tests/                  # 118 tests (pytest)
+├── tests/                  # 426 tests (pytest: 405 fast + 18 slow + 3 live-network integration)
 ├── data/                   # Synthetic dataset (5k rows, seed 42)
 ├── docker-compose.yml      # Full-stack orchestration
 └── render.yaml             # Cloud deployment configurations
@@ -221,7 +221,7 @@ key (403, no disbursement written).
 The project maintains a high standard of reliability with a comprehensive test suite.
 
 ```bash
-# Run the test suite (118 tests: 103 fast + 12 slow workflow + 3 live-network integration)
+# Run the test suite (426 tests: 405 fast + 18 slow workflow + 3 live-network integration)
 python -m pytest tests/ -v
 ```
 

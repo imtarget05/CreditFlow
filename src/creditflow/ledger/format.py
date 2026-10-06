@@ -1,3 +1,11 @@
+"""Ledger entry dataclass — EXPERIMENTAL / NON-CANONICAL prototype.
+
+Part of ``src/creditflow/ledger/``: a small research prototype of
+checkpoint/recovery semantics, NOT the runtime ledger. Canonical runtime
+ledger = ``pipeline/storage/ledger.py`` (used by ``backend/app.py``).
+Retained because ``tests/creditflow/test_format.py`` exercises it.
+"""
+
 from dataclasses import dataclass
 
 

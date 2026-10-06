@@ -1,5 +1,10 @@
 """Recovery module for ledger persistence after restart.
 
+EXPERIMENTAL / NON-CANONICAL: prototype recovery logic, not the runtime
+ledger. Canonical runtime ledger = ``pipeline/storage/ledger.py``
+(``backend/app.py``). Retained because ``tests/creditflow/test_recovery.py``
+exercises it.
+
 This module provides functionality to recover ledger data from the last
 checkpoint file, ensuring data survives application restarts.
 """

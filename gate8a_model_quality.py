@@ -14,6 +14,12 @@ accuracy 86% bat sai huong co chu dich.
 Diem mau chot cua gate nay KHONG phai "model pass". Do la chung minh co
 che kiem soat THUC SU phat hien duoc loi: mot candidate te phai bi CI
 chan, va CI phai tra exit code khac 0.
+
+CLASSIFICATION: EXPERIMENTAL — research/CI-gate prototype kept at repo root.
+NOT part of the canonical runtime path (backend/pipeline) and NOT invoked by
+any .github workflow today; thresholds live in gate8a_thresholds.yaml and it
+writes evidence to docs/evidence/e2e/. Kept as experimental quality-gate
+artwork — promote into CI explicitly if/when wired.
 """
 from __future__ import annotations
 

@@ -1,5 +1,10 @@
 """Check Render API — list services, verify creditflow-api exists.
 
+CLASSIFICATION: DEPLOYMENT / manual ops tool. Not imported by runtime or
+tests and not run by CI — invoked by hand during Render deploy verification
+(canonical demo deployment). Kept for operators, not part of the canonical
+business flow.
+
 Reads the API key from RENDER_API_KEY (environment) or a local `.env` file.
 The key is NEVER hardcoded here — see docs/deployment.md security notes.
 

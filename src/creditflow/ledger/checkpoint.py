@@ -1,4 +1,10 @@
-"""Checkpoint save/load utilities for ledger persistence."""
+"""Checkpoint save/load utilities for ledger persistence.
+
+EXPERIMENTAL / NON-CANONICAL: this module is a small research prototype of
+checkpoint/recovery semantics. It is NOT the runtime ledger — the canonical
+implementation used by ``backend/app.py`` is ``pipeline/storage/ledger.py``.
+Retained because ``tests/creditflow/test_checkpoint.py`` exercises it.
+"""
 
 import json
 import os
