@@ -188,9 +188,12 @@ data/*.db
 data/*.pkl
 data/*.tmp
 
-.terraform/
+# Terraform — ignore generated artifacts, NOT lock files (lock files are committed for reproducibility)
+**/.terraform/
 *.tfstate*
-.terraform.lock.hcl
+*.tfplan*
+crash.log
+crash.*.log
 
 # Runtime document artifacts (upload/applications flow; never committed).
 data/documents/
