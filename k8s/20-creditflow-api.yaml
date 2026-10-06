@@ -28,51 +28,48 @@ spec:
       serviceAccountName: portfolio-api
       securityContext:
         runAsNonRoot: true
-        runAsUser: 10001
-        fsGroup: 10001
+        runAsUser: 10002
+        fsGroup: 10002
         seccompProfile:
           type: RuntimeDefault
       containers:
       - name: api
-        image: hashicorp/http-echo:1.0.0
-        args: ["-text=creditflow-api ok", "-listen=:8080"]
+        image: creditflow-api:local
+        imagePullPolicy: IfNotPresent
         ports:
         - name: http
-          containerPort: 8080
+          containerPort: 8000
         envFrom:
         - configMapRef:
             name: portfolio-config
         env:
-        - name: DB_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: portfolio-secrets
-              key: DB_PASSWORD
+        - name: CREDITFLOW_ENV
+          value: "development"
         - name: CREDITFLOW_LLM_PROVIDER
-          value: "stub"   # không có LLM gateway trong kind
+          value: "stub"
         readinessProbe:
           httpGet:
-            path: /
+            path: /health/live
             port: http
-          initialDelaySeconds: 2
-          periodSeconds: 3
+          initialDelaySeconds: 5
+          periodSeconds: 5
           failureThreshold: 3
         livenessProbe:
           httpGet:
-            path: /
+            path: /health/live
             port: http
           initialDelaySeconds: 10
           periodSeconds: 10
           failureThreshold: 3
         resources:
           requests:
-            cpu: "25m"
-            memory: "32Mi"
+            cpu: "50m"
+            memory: "128Mi"
           limits:
-            memory: "64Mi"
+            cpu: "500m"
+            memory: "512Mi"
         securityContext:
           allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
           capabilities:
             drop: ["ALL"]
 ---
