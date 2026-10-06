@@ -14,6 +14,20 @@
 
 Designed with enterprise requirements in mind, it features tamper-evident audit trails, human-in-the-loop approval workflows, explainability, cryptographic decision snapshots, and rigorous cost-sensitive model selection.
 
+## 🚦 Production status (audited 2026-10-06)
+
+| Component | URL | State |
+|---|---|---|
+| Frontend (GitHub Pages) | https://imtarget05.github.io/CreditFlow/ | Deployed by `cd.yml` (`actions/deploy-pages`) |
+| API (Render, canonical) | https://creditflow-api-ko2h.onrender.com | `/health/live`, `/health/ready`, `/model/info` respond (logistic_regression_v001, threshold 0.20); business endpoints return `401` until `CREDITFLOW_API_KEY` is configured — fail-closed by design |
+
+Owner actions (dashboards — pipeline code is ready):
+
+- Render: set `CREDITFLOW_API_KEY` + `CREDITFLOW_CORS_ORIGINS=https://imtarget05.github.io`.
+- GitHub: add secret `CREDITFLOW_API_KEY` (same demo token; baked into the Pages
+  bundle as `VITE_API_KEY` — a **demo access token**, not a security boundary)
+  and `RENDER_DEPLOY_HOOK` (the CD backend job fails loudly until it exists).
+
 ---
 
 ## ✨ Key Features & Engineering Decisions
@@ -226,7 +240,9 @@ The system was trained on a **5,000-row synthetic proxy dataset** (seed `42`, ~1
 - **Processing**: Rule Filter DTI/LTI + TF-IDF cosine inference (local, offline-safe).
 - **Policy Guard cứng** (`pipeline/agent/explanations.py:is_public_cloud`): `CONFIDENTIAL` tuyệt đối chặn gửi ra public cloud (OpenAI/Groq/Cloudflare/Anthropic/Google) → route về Private vLLM (`ollama`/`local_vllm`) hoặc deterministic template fallback. Public cloud chỉ dùng cho data PUBLIC hoặc tắt hẳn.
 - **Compliance**: Banking Secrecy / GDPR / SBV — CONFIDENTIAL never leaks. Xem `docs/DEPLOYMENT_PRIVATE_ONPREM.md`.
-- **Legacy refs**: `render.yaml` / GitHub Pages / public-cloud env chỉ còn tính lịch sử, không phải deployment được hỗ trợ.
+- **Planes**: `render.yaml` + GitHub Pages = **portfolio demo plane** (free tier,
+  PUBLIC data only — see §Production status); enterprise production =
+  **PRIVATE ON-PREM** như trên. Public cloud env chỉ dành cho data PUBLIC.
 
 ---
 
