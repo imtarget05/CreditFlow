@@ -2,6 +2,10 @@ import { useEffect, useState } from "react";
 
 const PRIMARY_BASE = (import.meta.env.VITE_API_BASE) || "/api";
 const FALLBACK_BASE = "http://localhost:8080";
+// Optional shared key for the protected ledger/approve endpoints
+// (backend/security.py). Baked at build time via `VITE_API_KEY` — set it in
+// the build environment, never commit it. Absent => those endpoints 401.
+const API_KEY = (import.meta.env.VITE_API_KEY) || "";
 
 const APP_TITLE = "CreditFlow";
 const APP_SUBTITLE = "Sổ chấm rủi ro khoản vay";
@@ -11,9 +15,17 @@ const HISTORY_MAX = 50;
 
 async function fetchJson(path, options) {
   let lastErr = null;
+  const mergedHeaders = {
+    ...(API_KEY ? { "X-CreditFlow-API-Key": API_KEY } : {}),
+    ...((options && options.headers) || {}),
+  };
+  const mergedOptions = options ? { ...options, headers: mergedHeaders } : (API_KEY ? { headers: mergedHeaders } : undefined);
   for (const base of [PRIMARY_BASE, FALLBACK_BASE]) {
+    // From GitHub Pages, PRIMARY_BASE is absolute (Render). Never fall back
+    // to localhost in the browser — it only masks a real CORS/API-key error.
+    if (base === FALLBACK_BASE && /^https?:\/\//.test(PRIMARY_BASE)) break;
     try {
-      const r = await fetch(`${base}${path}`, options);
+      const r = await fetch(`${base}${path}`, mergedOptions);
       if (r.status === 404 && base === PRIMARY_BASE) {
         lastErr = new Error("HTTP 404 via proxy, trying direct backend");
         continue;
