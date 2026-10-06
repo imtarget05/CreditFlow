@@ -115,7 +115,8 @@ If `configured` is `false`, check the Render env vars are set correctly.
 
 | Variable | Required | Default | Notes |
 |----------|----------|---------|-------|
-| `VITE_API_BASE` | Yes | — | Baked at build time; must point to Render URL (`https://creditflow-api-ko2h.onrender.com`); local fallback is `/api` |
+| `VITE_API_BASE` | Yes | — | Baked at build time; must point to Render URL (`https://creditflow-api-ko2h.onrender.com`); local fallback is `/api`. Set via repo var `VITE_API_BASE` in `cd.yml` (defaults to the Render URL) |
+| `VITE_API_KEY` | For ledger/approve tabs | — | Baked at build time from repo secret `CREDITFLOW_API_KEY` — **must equal the Render `CREDITFLOW_API_KEY` value**. Absent => `/applications`, `/disbursements`, approve calls 401 by design (fail-closed, see `backend/security.py`) |
 
 ## Security Notes
 

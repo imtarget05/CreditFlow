@@ -113,6 +113,9 @@ jobs:
 
       - name: Install + build
         working-directory: frontend
+        env:
+          VITE_API_BASE: ${{ vars.VITE_API_BASE || 'https://creditflow-api-ko2h.onrender.com' }}
+          VITE_API_KEY: ${{ secrets.CREDITFLOW_API_KEY }}
         run: |
           npm ci
           npm run build
