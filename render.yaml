@@ -28,7 +28,11 @@ services:
       # as well and the app refuses to start at all without it.
       - key: CREDITFLOW_API_KEY
         sync: false
+      # Deployed from the GitHub Pages origin https://imtarget05.github.io, so the
+      # allow-list defaults to it. sync:false -> a dashboard value (e.g. a custom
+      # domain) wins on later syncs; never put '*' here (refused at startup).
       - key: CREDITFLOW_CORS_ORIGINS
+        value: https://imtarget05.github.io
         sync: false
       # GenAI explain layer — Cloudflare Workers AI.
       # sync:false → set the real values in Render dashboard (never in repo).
