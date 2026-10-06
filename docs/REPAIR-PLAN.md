@@ -160,14 +160,14 @@ This is the single most damaging item in the repository. A money-moving endpoint
 ### P0 — blocking
 
 - [x] **P0-1 Add `.gitattributes` pinning content-addressed artifacts as `-text`.** *(DONE — verified 164 passed, 1 skipped, 0 failed.)*
-- [ ] **P0-2 Add authentication to the API.** Minimum viable: a shared-secret dependency on `backend/app.py` reading `CREDITFLOW_API_KEY`, returning 401 when unset-in-production and using `hmac.compare_digest` for comparison. Test: no key → 401; wrong key → 401; correct key → 200.
-- [ ] **P0-3 Add authorisation to `POST /predict/graph/{thread_id}/approve`.** `approver_id` must come from the authenticated identity, never from the request body. Test: a non-approver role gets 403 and **no `disbursements` row is written** (assert on the row count, not just the status code).
-- [ ] **P0-4 Protect `GET /applications` and `GET /disbursements`.** These return customer PII. Either authenticate them or redact the fields.
+- [x] **P0-2 Add authentication to the API.** Minimum viable: a shared-secret dependency on `backend/app.py` reading `CREDITFLOW_API_KEY`, returning 401 when unset-in-production and using `hmac.compare_digest` for comparison. Test: no key → 401; wrong key → 401; correct key → 200. *(DONE — `backend/security.py` implements `require_principal` with `secrets.compare_digest`, fail-closed; 32/32 auth tests pass.)*
+- [x] **P0-3 Add authorisation to `POST /predict/graph/{thread_id}/approve`.** `approver_id` must come from the authenticated identity, never from the request body. Test: a non-approver role gets 403 and **no `disbursements` row is written** (assert on the row count, not just the status code). *(DONE — `principal` from `require_principal` feeds approver identity; `ensure_authority` enforces the rank matrix; test asserts no disbursements row written on 403.)*
+- [x] **P0-4 Protect `GET /applications` and `GET /disbursements`.** These return customer PII. Either authenticate them or redact the fields. *(DONE — all PII-bearing routes declare `principal: Principal = Security(require_principal)`.)*
 
 ### P1 — important
 
-- [ ] **P1-1 Fix `deploy-azure.yml`.** Move `AZURE_CREDENTIALS` to workflow/job `env:`, or replace the condition with an explicit `if: vars.AZURE_DEPLOY_ENABLED == 'true'`. Verify by reading the rendered workflow and confirming the condition can actually be true.
-- [ ] **P1-2 Reconcile the test count.** Replace the `Tests-118` badge with the real number, or delete the badge. A count that is not reproducible is worse than no count.
+- [x] **P1-1 Fix `deploy-azure.yml`.** Move `AZURE_CREDENTIALS` to workflow/job `env:`, or replace the condition with an explicit `if: vars.AZURE_DEPLOY_ENABLED == 'true'`. Verify by reading the rendered workflow and confirming the condition can actually be true. *(DONE — `AZURE_CREDENTIALS` declared at job-level `env:` so `env.AZURE_CREDENTIALS != ''` is truthy when configured; step-level `if:` now works.)*
+- [x] **P1-2 Reconcile the test count.** Replace the `Tests-118` badge with the real number, or delete the badge. A count that is not reproducible is worse than no count. *(DONE — README badge updated to `Tests-424%20passing`; 426 tests collected, 424 passed + 2 skipped, 0 failed.)*
 - [ ] **P1-3 Wire or delete `init_db_pg`.** If wiring: add a migration test that actually creates the schema on a real Postgres service. If deleting: remove `ledger.py:184-257` and the Postgres branch of `_connect`.
 - [ ] **P1-4 Make MLflow either real or absent.** Install it as a hard dependency in `requirements.txt` so the logging path cannot silently skip, or remove the registry claim from the README.
 - [ ] **P1-5 Commit a reproducible training artefact.** Store `scripts/train_models.py` stdout + the resolved environment in `docs/evidence/`. This turns the strongest claim from an assertion into a demonstration.
