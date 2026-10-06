@@ -137,29 +137,75 @@ jobs:
         uses: actions/deploy-pages@v4
 
   deploy-backend-render:
-    name: Deploy backend to Render (deploy hook + readiness + smoke)
+    name: Deploy backend to Render (API deploy + readiness + smoke)
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     needs: [build-api-image, deploy-frontend-pages]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Trigger Render deploy via deploy hook
+      - name: Trigger Render deploy via API
+        id: deploy
         env:
-          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: |
-          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
-            echo "::error::RENDER_DEPLOY_HOOK secret is not configured. The previous job only echoed success while deploying nothing; a real deploy requires the Render deploy-hook URL (Render dashboard -> creditflow-api service -> Deploy Hook) as a repository secret."
+          if [ -z "$RENDER_API_KEY" ] || [ -z "$RENDER_SERVICE_ID" ]; then
+            echo "::error::RENDER_API_KEY / RENDER_SERVICE_ID secrets are not configured. Production redeploy cannot run — add both (Render dashboard -> creditflow-api service: API key + Service ID) or remove this job deliberately. A skipped deploy must never count as success."
             exit 1
           fi
-          curl -sf -X POST "$RENDER_DEPLOY_HOOK" -H "Content-Type: application/json" -d '{"branch": "main"}'
-          echo "Render deploy hook triggered."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache":"do_not_clear"}')
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ] && [ "$HTTP_CODE" != "202" ]; then
+            echo "ERROR: Render deploy failed (HTTP ${HTTP_CODE})"
+            echo "$BODY"
+            exit 1
+          fi
+          DEPLOY_ID=$(echo "$BODY" | jq -r '.id // empty')
+          if [ -n "$DEPLOY_ID" ]; then
+            echo "deploy_id=${DEPLOY_ID}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Render deploy triggered: $BODY"
 
-      - name: Poll production readiness
+      - name: Wait for Render deploy + poll readiness
         env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
           API_BASE: ${{ vars.VITE_API_BASE || 'https://creditflow-api-9z1v.onrender.com' }}
         run: |
-          echo "Polling ${API_BASE}/health/ready (Render free-tier cold starts up to ~60s)..."
+          if [ -z "$RENDER_API_KEY" ] || [ -z "$RENDER_SERVICE_ID" ]; then
+            echo "::error::Render secrets not configured — cannot poll production readiness. Failing loudly instead of skipping."
+            exit 1
+          fi
+          DEPLOY_ID="${{ steps.deploy.outputs.deploy_id }}"
+          if [ -n "$DEPLOY_ID" ]; then
+            echo "Waiting for Render deploy ${DEPLOY_ID} to go live (max 20 min)..."
+            for i in $(seq 1 40); do
+              STATUS=$(curl -s -H "Authorization: Bearer ${RENDER_API_KEY}" \
+                "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys/${DEPLOY_ID}" \
+                | jq -r '.status // empty')
+              echo "Attempt $i/40 — deploy status: ${STATUS:-unknown}"
+              if [ "$STATUS" = "live" ]; then
+                echo "Render deploy is live"
+                break
+              fi
+              if [ "$STATUS" = "build_failed" ] || [ "$STATUS" = "update_failed" ] || [ "$STATUS" = "canceled" ] || [ "$STATUS" = "deactivated" ]; then
+                echo "::error::Render deploy ended with status: ${STATUS}"
+                exit 1
+              fi
+              sleep 30
+            done
+            if [ "$STATUS" != "live" ]; then
+              echo "::error::Deploy did not reach 'live' within 20 minutes"
+              exit 1
+            fi
+          fi
+          echo "Polling ${API_BASE}/health/ready (Render cold starts up to ~60s)..."
           for i in $(seq 1 30); do
             if curl -sf --max-time 10 "${API_BASE}/health/ready" > /dev/null 2>&1 \
                || curl -sf --max-time 10 "${API_BASE}/health/live" > /dev/null 2>&1; then
