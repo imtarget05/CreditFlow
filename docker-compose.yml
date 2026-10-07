@@ -53,6 +53,60 @@ services:
       - creditflow-net
       - portfolio-net
 
+  # Self-hosted MLflow tracking stack (persistent metadata + artifacts).
+  # Local/private only — never production-HA. Host port 5050 vì macOS AirPlay
+  # chiếm 5000 (lsof: ControlCe). Chỉ chạy khi gọi profile:
+  #   docker compose --profile mlflow up -d
+  #   MLFLOW_TRACKING_URI=http://localhost:5050 python scripts/train_models.py
+  postgres-mlflow:
+    profiles: ["mlflow"]
+    image: postgres:16-alpine
+    container_name: creditflow-mlflow-db
+    environment:
+      - POSTGRES_USER=${MLFLOW_DB_USER:-mlflow}
+      - POSTGRES_PASSWORD=${MLFLOW_DB_PASSWORD:-mlflow-dev-only}
+      - POSTGRES_DB=${MLFLOW_DB_NAME:-mlflow}
+    volumes:
+      - mlflow-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-mlflow}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - creditflow-net
+
+  mlflow:
+    profiles: ["mlflow"]
+    image: ghcr.io/mlflow/mlflow:v3.16.0
+    container_name: creditflow-mlflow
+    command: >-
+      sh -c "pip install --no-cache-dir psycopg2-binary &&
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri postgresql+psycopg2://${MLFLOW_DB_USER:-mlflow}:${MLFLOW_DB_PASSWORD:-mlflow-dev-only}@postgres-mlflow:5432/${MLFLOW_DB_NAME:-mlflow}
+      --default-artifact-root /tmp/creditflow-mlflow-artifacts"
+    ports:
+      - "127.0.0.1:5050:5000"
+    volumes:
+      - /tmp/creditflow-mlflow-artifacts:/tmp/creditflow-mlflow-artifacts
+    depends_on:
+      postgres-mlflow:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/', timeout=5)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - creditflow-net
+
+volumes:
+  mlflow-postgres:
+  mlflow-artifacts:
+
 networks:
   creditflow-net:
     name: creditflow-net
@@ -60,17 +114,3 @@ networks:
   portfolio-net:
     external: true
     name: portfolio-net
-
-  # Optional MLflow tracking server (enable when a remote store is wanted):
-  #   docker compose --profile mlflow up --build
-  #   MLFLOW_TRACKING_URI=http://localhost:5000 python scripts/train_models.py
-  # mlflow:
-  #   profiles: ["mlflow"]
-  #   image: ghcr.io/mlflow/mlflow:v3.16.0
-  #   command: mlflow server --host 0.0.0.0 --port 5000
-  #   ports:
-  #     - "5000:5000"
-  #   networks:
-  #     - creditflow-net
-  # volumes:
-  #   mlflow-data:
