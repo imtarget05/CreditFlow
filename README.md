@@ -122,11 +122,14 @@ npm run dev
 
 #### MLOps (Training & Tracking)
 ```bash
-# Run model training pipeline with MLflow tracking
-MLFLOW_TRACKING_URI=sqlite:///mlflow.db python scripts/train_models.py
+# Start the operational MLflow tracking stack (PostgreSQL backend store + artifact volume)
+docker compose --profile mlflow up -d
 
-# Launch MLflow UI
-mlflow ui --port 5000
+# Run model training pipeline with MLflow tracking (data persists across restarts)
+MLFLOW_TRACKING_URI=http://localhost:5050 python scripts/train_models.py
+
+# Or just browse the server that compose started:
+# http://localhost:5050
 ```
 
 ---
