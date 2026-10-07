@@ -7,7 +7,7 @@
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-Enabled-orange.svg)](https://scikit-learn.org/)
 [![MLflow](https://img.shields.io/badge/MLflow-3.16-blue.svg)](https://mlflow.org/)
 [![Docker](https://img.shields.io/badge/Docker-Supported-blue.svg)](https://www.docker.com/)
-[![Tests](https://img.shields.io/badge/Tests-424%20passing-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-426%20passing-success.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **CreditFlow** is a production-grade ML credit risk decision support system tailored for financial lending. Moving beyond simple notebook exercises, this is a fully deployable decision engine with a complete pipeline: **data validation → feature engineering → model training → evaluation → serving → monitoring**.
@@ -209,7 +209,7 @@ key (403, no disbursement written).
 ├── models/production/      # Serialized pipeline + benchmark results + meta
 ├── notebooks/              # EDA + model benchmark notebooks
 ├── scripts/                # Training, deploy verification, eval
-├── tests/                  # 426 tests (pytest: 403 fast + 18 slow + 3 integration; last full run: 424 passed, 2 skipped, 0 failed)
+├── tests/                  # 426 tests (405 fast + 18 slow + 3 production integration; verified baseline below)
 ├── data/                   # Synthetic dataset (5k rows, seed 42)
 ├── docker-compose.yml      # Full-stack orchestration
 └── render.yaml             # Cloud deployment configurations
@@ -222,9 +222,24 @@ key (403, no disbursement written).
 The project maintains a high standard of reliability with a comprehensive test suite.
 
 ```bash
-# Run the test suite (426 tests: 403 fast + 18 slow + 3 integration; 424 passed, 2 skipped)
 python -m pytest tests/ -v
 ```
+
+**Current verified baseline (2026-10-07, clean clone of `b4b031b`):**
+426 passed, 0 failed, 0 skipped on Python 3.12.13 with npm available and the
+production Render backend warm/reachable.
+
+| Tier | Tests |
+|---|---|
+| Fast (`not integration and not slow and not live and not infra`) | 405 |
+| Slow (full LangGraph + model runs) | 18 |
+| Production integration (`-m integration`) | 3 |
+
+The three production integration tests (`tests/test_deploy_pages.py`) may skip
+when `npm` is unavailable or when the Render free-tier backend is cold or
+unreachable (first request after idle can take ~20-60 s, longer than the test
+timeout). That is an infrastructure-availability condition, not a code
+regression. `live` / `infra` tests only run with `LIVE_TESTS=1`.
 
 ---
 
