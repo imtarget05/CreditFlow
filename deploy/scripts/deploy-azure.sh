@@ -12,7 +12,7 @@ ACR_NAME="${ACR_NAME:-}"
 CONTAINERAPPS_ENVIRONMENT="${CONTAINERAPPS_ENVIRONMENT:-cae-portfolio-env}"
 APP_NAME="creditflow-api"
 TARGET_PORT=8080
-IMAGE_TAG="latest"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
 
 echo "=========================================================="
 echo "🚀 Deploying CreditFlow API to Azure Container Apps"
