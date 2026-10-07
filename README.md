@@ -282,6 +282,56 @@ Chi tiết vận hành: `docs/DEPLOYMENT_PRIVATE_ONPREM.md` (§6).
 
 ---
 
-## 📄 License
+## 🗃 MLflow Tracking (Self-Hosted, Local)
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Self-hosted MLflow 3.16 tracking stack for local development: **PostgreSQL 16** as
+the backend store + **MLflow server** as the artifact/metadata store. Persists
+experiments, runs, params, metrics, tags, registry entries and model artifacts across
+container restarts (Postgres + artifact volume survive `restart`/`down`-`up`).
+
+### Compose
+
+```bash
+# start only the MLflow profile
+docker compose --profile mlflow up -d
+
+# tracking URI the training client must use
+export MLFLOW_TRACKING_URI=http://localhost:5050
+```
+
+Services (compose `profiles: ["mlflow"]`):
+- `postgres-mlflow` — PostgreSQL 16, named volume `mlflow-postgres` → backend store.
+- `mlflow` — image `ghcr.io/mlflow/mlflow:v3.16.0`, runs `mlflow server --host 0.0.0.0 --port 5000`
+  with `--backend-store-uri postgresql+psycopg2://...@postgres-mlflow:5432/...` and
+  `--default-artifact-root /tmp/creditflow-mlflow-artifacts` (host bind mount).
+
+Server URL: `http://localhost:5050` (host port 5050 → container port 5000).
+
+### Verification
+
+```bash
+MLFLOW_TRACKING_URI=http://localhost:5050 scripts/verify_mlflow.py
+# exit 0 when experiment / runs / parameters / metrics / artifacts / registry all present
+```
+
+### Env variables (`mlflow` profile only; gitignored placeholders)
+
+See `.env.example`. `MLFLOW_TRACKING_URI` is a **client** env var for the Python training
+process — it is not server configuration:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MLFLOW_TRACKING_URI` | `http://localhost:5050` | server URI used by the training client |
+| `MLFLOW_DB_USER` | `mlflow` | Postgres backend store user |
+| `MLFLOW_DB_PASSWORD` | `mlflow-dev-only` | **never commit real value**; set in `.env` |
+| `MLFLOW_DB_NAME` | `mlflow` | Postgres backend store database |
+
+### Notes / gotchas
+
+- `MLFLOW_TRACKING_URI` must be exported on the **client** (the machine running
+  `scripts/train_models.py`), not inside the compose file.
+- On each training run the production bundle is regenerated; commit
+  `models/production/manifest.json`, `meta.json`, `SHA256SUMS` and `reference_stats.json`
+  alongside the model artifact (`pipeline.joblib`) — use
+  `scripts/check_artifacts.py --build --dir models/production` to refresh the SHA-256 manifest.
+

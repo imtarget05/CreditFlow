@@ -3,7 +3,7 @@
   "metadata": {
     "model_name": "logistic_regression",
     "version": "logistic_regression_v001",
-    "trained_at": "2026-09-18T02:20:43.861272+00:00",
+    "trained_at": "2026-10-07T07:10:21.598310+00:00",
     "threshold": 0.2,
     "business_cost": 201.0,
     "fn_cost": 5.0,
@@ -64,13 +64,13 @@
       "n_test": 750,
       "note": "threshold + model selection use validation only; test is reporting only"
     },
-    "update_reason": "scheduled retrain (no reason given)",
-    "previous_trained_at": "2026-09-17T19:15:22.254348+00:00"
+    "update_reason": "mlflow self-hosted persistence verification",
+    "previous_trained_at": "2026-10-07T07:05:14.528752+00:00"
   },
   "artifacts": {
     "benchmark_results.csv": "38c9e098689df295a0a33260dd1ea432597cd5162f186055fa311fedf4362f23",
     "benchmark_results.json": "5ea5b0785281f0fedb7b45c6eabeeccf1c31d43ce7593088875ffb6de03b6c90",
-    "meta.json": "c056b3c2c0979d0e7f6fdeb35624688054f862556e8cb8da8471fa56f6fa77aa",
+    "meta.json": "78c86cd5d200929330f23c06c57f66a479e4a8d65c51443d61070ac84e24f93c",
     "pipeline.joblib": "119f3b3c9c7f3e0c8260b7955cd0b5ba169edd5545d54e6f9c4cea2b36e48774",
     "reference_stats.json": "757c86a075d89931166d954203b53349f60cfd98e0a229945f49f7389d268c2e"
   }
