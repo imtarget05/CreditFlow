@@ -19,6 +19,7 @@ Designed with enterprise requirements in mind, it features tamper-evident audit 
 | Component | URL | State |
 |---|---|---|
 | Frontend (GitHub Pages) | https://imtarget05.github.io/CreditFlow/ | Deployed by `cd.yml` (`actions/deploy-pages`) |
+| API (Azure Container Apps) | https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io | `creditflow-api` container app, scale 0-1, /health/live + /health/ready + /model/info verified 2026-10-07 |
 | API (Render, canonical) | https://creditflow-api-9z1v.onrender.com | `/health/live`, `/health/ready`, `/model/info` respond (logistic_regression_v001, threshold 0.20); business endpoints return `401` until `CREDITFLOW_API_KEY` is configured — fail-closed by design |
 
 Owner actions (dashboards — pipeline code is ready):
@@ -42,7 +43,7 @@ Owner actions (dashboards — pipeline code is ready):
 8. **Explainable AI**: Deployment duy nhất: **PRIVATE ON-PREM** — lõi Deterministic ML + Rule Engine nội bộ (Rule Filter DTI/LTI + TF-IDF cosine inference), LLM memo chạy Private vLLM nội bộ (Local VPC: `ollama`/`local_vllm`/`private-vllm`). **Policy Guard cứng: data `CONFIDENTIAL` tuyệt đối chặn, không fallback Public Cloud** (OpenAI/Groq/Cloudflare/Anthropic/Google). The LLM *explains*, it does *not* decide. Training = Traditional ML Training from Scratch (LogReg/XGBoost tabular, `colab/train_credit_T4.ipynb`).
 9. **Production Monitoring & Drift Domain Events**: Includes **PSI (Population Stability Index)** drift detection against baselines; emits `ModelDriftDetected` domain events to the outbox when distribution shift exceeds threshold.
 10. **Model Integrity Verification**: Load-time gate checks model bundle checksum against `SHA256SUMS` and `manifest.json`.
-11. **Comprehensive MLOps & Cloud-Native Topology**: Experiment tracking via MLflow; containerized deployments with Kubernetes manifests (`k8s/20-creditflow-api.yaml`) featuring HPA, resource quotas, and hardened security profiles.
+11. **Comprehensive MLOps & Cloud-Native Topology**: Experiment tracking via MLflow; containerized deployments with Kubernetes manifests (`k8s/20-creditflow-api.yaml`) featuring HPA and hardened security profiles (dev-stub manifest — not a live cluster).
 
 
 ---
@@ -208,7 +209,7 @@ key (403, no disbursement written).
 ├── models/production/      # Serialized pipeline + benchmark results + meta
 ├── notebooks/              # EDA + model benchmark notebooks
 ├── scripts/                # Training, deploy verification, eval
-├── tests/                  # 426 tests (pytest: 405 fast + 18 slow + 3 live-network integration)
+├── tests/                  # 426 tests (pytest: 403 fast + 18 slow + 3 integration; last full run: 424 passed, 2 skipped, 0 failed)
 ├── data/                   # Synthetic dataset (5k rows, seed 42)
 ├── docker-compose.yml      # Full-stack orchestration
 └── render.yaml             # Cloud deployment configurations
@@ -221,7 +222,7 @@ key (403, no disbursement written).
 The project maintains a high standard of reliability with a comprehensive test suite.
 
 ```bash
-# Run the test suite (426 tests: 405 fast + 18 slow workflow + 3 live-network integration)
+# Run the test suite (426 tests: 403 fast + 18 slow + 3 integration; 424 passed, 2 skipped)
 python -m pytest tests/ -v
 ```
 
