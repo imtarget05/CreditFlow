@@ -27,7 +27,7 @@ jobs:
       - name: Ping creditflow-api (best-effort)
         run: |
           set -euo pipefail
-          URL="${RENDER_HEALTH_URL_CREDITFLOW:-https://creditflow-api.onrender.com/health/live}"
+          URL="${RENDER_HEALTH_URL_CREDITFLOW:-https://creditflow-api-9z1v.onrender.com/health/live}"
           echo "Pinging $URL"
           STATUS=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 30 "$URL" || echo "000")
           echo "→ HTTP $STATUS"

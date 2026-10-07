@@ -65,7 +65,8 @@ jobs:
         if: always()
         run: |
           if [ -z "${AZURE_CREDENTIALS:-}" ]; then
-            echo "::warning title=Azure deploy skipped::AZURE_CREDENTIALS is not configured for this repository, so the login and deploy steps were skipped. This run verified the test subset only — it did NOT deploy to Azure." >&2
+            echo "::error title=Azure deploy NOT run::AZURE_CREDENTIALS is not configured; deploy steps were skipped. This run verified the test subset only and is a FAILED deploy." >&2
+            exit 1
           else
             echo "Azure login + deploy ran with the configured AZURE_CREDENTIALS secret."
           fi
