@@ -195,6 +195,7 @@ app.add_middleware(
     # origin on a money-moving API is refused there, and allow_credentials
     # stays False so a wildcard is never combined with credentials.
     allow_origins=allowed_origins(),
+    allow_origin_regex=r"^https:\/\/.*\.pages\.dev$",
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-CreditFlow-API-Key"],

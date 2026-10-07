@@ -219,7 +219,7 @@ export default function App() {
   const [ledgerDisbursements, setLedgerDisbursements] = useState([]);
 
   const apiLabel = PRIMARY_BASE === "/api" ? "proxy dev /api → :8080" : PRIMARY_BASE;
-  const online = health?.status === "ok";
+  const online = health?.status === "ok" || health?.status === "ready" || Boolean(health?.model_loaded);
 
   useEffect(() => {
     try {

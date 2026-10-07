@@ -59,6 +59,7 @@ DEFAULT_APPROVER_ROLE = "UNDERWRITER_L1"
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:5173",  # vite dev server (frontend/vite.config.js:8)
     "http://localhost:8080",  # docker compose web (nginx -> api)
+    "https://creditflow-1cg.pages.dev",  # Cloudflare Pages production frontend
 )
 
 # Seniority of the credit approval authority matrix that the workflow already

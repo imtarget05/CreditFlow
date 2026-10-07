@@ -32,7 +32,7 @@ services:
       # allow-list defaults to it. sync:false -> a dashboard value (e.g. a custom
       # domain) wins on later syncs; never put '*' here (refused at startup).
       - key: CREDITFLOW_CORS_ORIGINS
-        value: https://imtarget05.github.io
+        value: https://creditflow-1cg.pages.dev,https://imtarget05.github.io
         sync: false
       # GenAI explain layer — Cloudflare Workers AI.
       # sync:false → set the real values in Render dashboard (never in repo).
