@@ -5,6 +5,20 @@ approver identity.  There is no user table, no OAuth provider and no role
 database here, and inventing one would be a worse answer than a small honest
 one: a single secret is auditable, rotatable and reviewable.
 
+Limitation, stated honestly (mirrors the README "Production status" note): what
+this module implements is **one shared API key per deployment**, not per-user
+identity or RBAC.  There is no user table and no per-caller role, so every
+holder of the key presents the same ``Principal``, and ``approver_id`` is a
+single deployment-wide configuration value (``CREDITFLOW_API_KEY_ID``) rather
+than the identity of the human who clicked approve.  Attributing an approval to
+an individual reviewer, revoking one user without rotating the key for
+everyone, and giving two people different authority all need the layer this
+module deliberately does not invent: an identity provider (OIDC/OAuth2) or user
+table, per-session credentials, RBAC mapping an authenticated user to a credit
+authority level, and audit logging of the authenticated user id.  Until that
+layer exists, treat reviewer identity as a configuration label, not as evidence
+of who approved.
+
 Configuration (environment only — never a committed value):
 
   CREDITFLOW_API_KEY        the shared secret presented in X-CreditFlow-API-Key
@@ -59,7 +73,7 @@ DEFAULT_APPROVER_ROLE = "UNDERWRITER_L1"
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:5173",  # vite dev server (frontend/vite.config.js:8)
     "http://localhost:8080",  # docker compose web (nginx -> api)
-    "https://creditflow-1cg.pages.dev",  # Cloudflare Pages production frontend
+    "https://imtarget05.github.io",  # GitHub Pages production frontend
 )
 
 # Seniority of the credit approval authority matrix that the workflow already

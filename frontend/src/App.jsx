@@ -2,10 +2,6 @@ import { useEffect, useState } from "react";
 
 const PRIMARY_BASE = (import.meta.env.VITE_API_BASE) || "/api";
 const FALLBACK_BASE = "http://localhost:8080";
-// Optional shared key for the protected ledger/approve endpoints
-// (backend/security.py). Baked at build time via `VITE_API_KEY` — set it in
-// the build environment, never commit it. Absent => those endpoints 401.
-const API_KEY = (import.meta.env.VITE_API_KEY) || "";
 
 const APP_TITLE = "CreditFlow";
 const APP_SUBTITLE = "Sổ chấm rủi ro khoản vay";
@@ -15,17 +11,12 @@ const HISTORY_MAX = 50;
 
 async function fetchJson(path, options) {
   let lastErr = null;
-  const mergedHeaders = {
-    ...(API_KEY ? { "X-CreditFlow-API-Key": API_KEY } : {}),
-    ...((options && options.headers) || {}),
-  };
-  const mergedOptions = options ? { ...options, headers: mergedHeaders } : (API_KEY ? { headers: mergedHeaders } : undefined);
   for (const base of [PRIMARY_BASE, FALLBACK_BASE]) {
-    // From GitHub Pages, PRIMARY_BASE is absolute (Render). Never fall back
-    // to localhost in the browser — it only masks a real CORS/API-key error.
+    // A configured absolute backend is authoritative. Never hide its errors
+    // by falling back to localhost in a deployed browser.
     if (base === FALLBACK_BASE && /^https?:\/\//.test(PRIMARY_BASE)) break;
     try {
-      const r = await fetch(`${base}${path}`, mergedOptions);
+      const r = await fetch(`${base}${path}`, options);
       if (r.status === 404 && base === PRIMARY_BASE) {
         lastErr = new Error("HTTP 404 via proxy, trying direct backend");
         continue;
@@ -214,7 +205,7 @@ export default function App() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [history, setHistory] = useState(loadHistory);
   const [updateNote, setUpdateNote] = useState(null);
-  const [approving, setApproving] = useState(false);
+  const ledgerAuthorized = false;
   const [ledgerApps, setLedgerApps] = useState([]);
   const [ledgerDisbursements, setLedgerDisbursements] = useState([]);
 
@@ -282,42 +273,6 @@ export default function App() {
   async function checkHealth() {
     try { const r = await fetchJson("/health"); setHealth(r.ok ? await r.json() : { status: `error ${r.status}` }); }
     catch { setHealth({ status: "unreachable" }); }
-  }
-
-  async function handleHumanDecision(action) {
-    if (!result?.thread_id) return;
-    setApproving(true);
-    try {
-      const r = await fetchJson(`/predict/graph/${result.thread_id}/approve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, note: `Thẩm định viên phê duyệt: ${action}` }),
-      });
-      if (!r.ok) throw new Error(`Lỗi duyệt (${r.status})`);
-      const data = await r.json();
-      setResult((prev) => ({
-        ...prev,
-        ...data,
-        risk_probability: data.risk_score ?? prev.risk_probability,
-        decision: data.decision,
-        approval_required: false,
-        approval_status: data.approval_status,
-        disbursement: data.disbursement,
-      }));
-      setHistory((h) => [{
-        id: `${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
-        at: Date.now(),
-        inputs: { ...submitted?.inputs },
-        prob: data.risk_score ?? result.risk_probability,
-        level: data.risk_level ?? result.risk_level,
-        decision: data.decision,
-        model: `${result.model_name} · ${result.model_version} (${action.toUpperCase()})`,
-      }, ...h].slice(0, HISTORY_MAX));
-    } catch (err) {
-      setError(`Không thể gửi quyết định: ${err.message}`);
-    } finally {
-      setApproving(false);
-    }
   }
 
   async function submit(e) {
@@ -448,6 +403,7 @@ export default function App() {
   }
 
   async function fetchLedger() {
+    if (!ledgerAuthorized) return;
     try {
       const [rApps, rDisb] = await Promise.all([
         fetchJson("/applications"),
@@ -695,28 +651,8 @@ export default function App() {
                       <div className="banner" style={{ marginTop: "14px", border: "2px solid var(--warn)", background: "var(--warn-wash)" }}>
                         <strong>Yêu cầu phê duyệt cấp quản lý (HITL)</strong>
                         <p style={{ margin: "6px 0 10px", fontSize: "13.5px" }}>
-                          Hồ sơ thuộc diện rà soát theo chính sách rủi ro. Cán bộ thẩm định đưa ra quyết định:
+                          Hồ sơ đang chờ cán bộ thẩm định. Thao tác phê duyệt bị khóa trên giao diện demo tĩnh; quyết định phải được gửi từ client nội bộ đã xác thực.
                         </p>
-                        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                          <button
-                            type="button"
-                            className="primary"
-                            style={{ background: "var(--good)", borderColor: "var(--good)", padding: "8px 16px" }}
-                            disabled={approving}
-                            onClick={() => handleHumanDecision("approve")}
-                          >
-                            {approving ? "Đang xử lý…" : "✓ Phê duyệt cho vay"}
-                          </button>
-                          <button
-                            type="button"
-                            className="primary"
-                            style={{ background: "var(--bad)", borderColor: "var(--bad)", padding: "8px 16px" }}
-                            disabled={approving}
-                            onClick={() => handleHumanDecision("reject")}
-                          >
-                            {approving ? "Đang xử lý…" : "✕ Từ chối cho vay"}
-                          </button>
-                        </div>
                       </div>
                     )}
 
@@ -804,9 +740,17 @@ export default function App() {
                 <h2>Sổ cái tín dụng &amp; Giải ngân (Durable Ledger)</h2>
                 <p>Hồ sơ và lệnh giải ngân được lưu bền trong SQLite. Mỗi lệnh có hash SHA-256 tamper-evident: sửa dữ liệu đã hash sẽ bị phát hiện khi đọc lại — không phải bảo đảm bất biến.</p>
               </div>
-              <button type="button" className="ghost" onClick={fetchLedger}>Làm mới sổ cái</button>
+              <button type="button" className="ghost" onClick={fetchLedger} disabled={!ledgerAuthorized}>Làm mới sổ cái</button>
             </div>
             <div className="pad">
+              {!ledgerAuthorized && (
+                <div className="banner" role="status" style={{ marginBottom: "18px", border: "2px solid var(--warn)", background: "var(--warn-wash)" }}>
+                  <strong>API_KEY_NOT_CONFIGURED: sổ cái và thao tác duyệt được khóa trên trình duyệt công khai.</strong>
+                  <p style={{ margin: "6px 0 0", fontSize: "13.5px" }}>
+                    API yêu cầu thông tin xác thực phía máy chủ. Không đưa shared API key vào Pages/browser; hãy xem ledger và xử lý approval qua client nội bộ đã xác thực.
+                  </p>
+                </div>
+              )}
               <div className="next-title">Sổ giải ngân ({ledgerDisbursements.length} hợp đồng)</div>
               <p className="detail-note">Các khoản vay đã qua thẩm định phê duyệt và ký quỹ giải ngân thành công.</p>
               {ledgerDisbursements.length > 0 ? (

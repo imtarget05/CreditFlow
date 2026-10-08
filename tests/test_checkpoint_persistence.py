@@ -58,7 +58,12 @@ REVIEW_CANDIDATES = [
 
 @pytest.fixture()
 def checkpoint_env(tmp_path, monkeypatch):
-    """Point the checkpointer at a fresh per-test file."""
+    """Point the checkpointer at a fresh per-test file.
+
+    ``DATABASE_URL`` is cleared so a developer's shared-store config cannot
+    redirect these file-saver tests (create_checkpointer's fallback rule).
+    """
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     db = tmp_path / "checkpoints.pkl"
     monkeypatch.setenv("CREDITFLOW_CHECKPOINT_DB", str(db))
     return db

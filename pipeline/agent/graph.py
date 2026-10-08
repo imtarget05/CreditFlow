@@ -90,7 +90,8 @@ def build_credit_graph(
         Defaults to ``InMemorySaver`` (RAM only, fine for one-off runs).
         Pass ``FileCheckpointSaver()`` so paused workflows survive a process
         restart and ``POST /predict/graph/{thread_id}/approve`` can resume
-        them.
+        them, or ``create_checkpointer()`` (pipeline/agent/checkpointer.py)
+        to pick shared storage from ``DATABASE_URL`` with a file fallback.
     """
     # Instantiate decoupled sub-agents
     underwriting = UnderwritingRiskAgent(pipeline, meta)
@@ -146,7 +147,8 @@ def build_credit_graph(
 
     # InMemorySaver (default) enables pause/resume for human approval
     # interrupts.  Pass FileCheckpointSaver() to persist the paused state
-    # across process restarts (pipeline/agent/checkpointer.py).
+    # across process restarts (pipeline/agent/checkpointer.py), or
+    # create_checkpointer() to use shared storage (DATABASE_URL).
     if checkpointer is None:
         checkpointer = InMemorySaver()
     return sg.compile(checkpointer=checkpointer)

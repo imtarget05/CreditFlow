@@ -192,10 +192,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     # Explicit allow-list (backend/security.py:allowed_origins). A wildcard
-    # origin on a money-moving API is refused there, and allow_credentials
-    # stays False so a wildcard is never combined with credentials.
+    # origin on a money-moving API is refused there. No Pages wildcard regex:
+    # only the explicitly configured GitHub Pages origin may call this API.
     allow_origins=allowed_origins(),
-    allow_origin_regex=r"^https:\/\/.*\.pages\.dev$",
+    allow_origin_regex=None,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "X-CreditFlow-API-Key"],
@@ -261,6 +261,9 @@ def health_ready():
     return {
         "status": "ready" if ready else "not-ready",
         "checks": checks,
+        # Which store actually keeps the paused workflows: "postgres" |
+        # "sqlite" (shared, DATABASE_URL) or "file" (single-process local file).
+        "checkpoint_backend": getattr(app.state, "checkpoint_backend", "unset"),
         "model_version": meta.get("version", "unknown"),
     }
 
@@ -457,24 +460,28 @@ def metrics_prometheus():
 # ---------------------------------------------------------------------------
 # LangGraph decision workflow endpoints (spec §16 architecture)
 # ---------------------------------------------------------------------------
-# One shared compiled graph.  Workflow state lives in the file-backed
-# checkpointer (keyed by thread_id), NOT in RAM — a server restart restores
-# every paused workflow from the checkpoint file, so
-# POST /predict/graph/{thread_id}/approve works across restarts.
+# One shared compiled graph.  Workflow state lives in the checkpointer
+# (keyed by thread_id), NOT in RAM — a server restart restores every paused
+# workflow, so POST /predict/graph/{thread_id}/approve works across restarts.
+# The store is selected by create_checkpointer(): DATABASE_URL pointing at
+# Postgres/SQLite gives shared storage every replica can reach; without it the
+# single-process FileCheckpointSaver (pipeline/agent/checkpointer.py) is used
+# and the store path is the local checkpoint file.
 _shared_graph: Any = None
 
 
 def _build_shared_graph():
-    """Build the workflow graph once, with a durable FileCheckpointSaver."""
+    """Build the workflow graph once, on a shared or file checkpointer."""
     global _shared_graph
     if _shared_graph is None:
+        from pipeline.agent import checkpointer as checkpointer_module
         from pipeline.agent.graph import build_credit_graph
-        from pipeline.agent.checkpointer import FileCheckpointSaver
 
         checkpointer = getattr(app.state, "checkpointer", None)
         if checkpointer is None:
-            checkpointer = FileCheckpointSaver()
+            checkpointer, backend = checkpointer_module.create_checkpointer()
             app.state.checkpointer = checkpointer
+            app.state.checkpoint_backend = backend
         _shared_graph = build_credit_graph(
             app.state.pipeline, app.state.meta, checkpointer=checkpointer
         )
@@ -487,6 +494,8 @@ def _reset_shared_graph() -> None:
     _shared_graph = None
     if hasattr(app.state, "checkpointer"):
         del app.state.checkpointer
+    if hasattr(app.state, "checkpoint_backend"):
+        del app.state.checkpoint_backend
 
 
 class GraphStartRequest(BaseModel):

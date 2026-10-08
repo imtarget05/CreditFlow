@@ -17,7 +17,7 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE = (os.environ.get("CREDITFLOW_SMOKE_BASE") or "https://creditflow-api-9z1v.onrender.com").rstrip("/")
+BASE = (os.environ.get("CREDITFLOW_SMOKE_BASE") or "https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io").rstrip("/")
 ORIGIN = os.environ.get("CREDITFLOW_SMOKE_ORIGIN") or "https://imtarget05.github.io"
 API_KEY = os.environ.get("CREDITFLOW_SMOKE_API_KEY") or ""
 FAILS = []
@@ -46,10 +46,15 @@ def main():
     st, _, _ = req("/health/live")
     check("health/live", st == 200, f"({st})")
 
-    st, _, _ = req("/health/ready")
-    if st == 404:
-        st, _, _ = req("/health")
-    check("health/ready (or /health)", st == 200, f"({st})")
+    st, body, _ = req("/health/ready")
+    ready = False
+    readiness_status = "invalid"
+    try:
+        readiness_status = json.loads(body).get("status", "invalid")
+        ready = st == 200 and readiness_status == "ready"
+    except json.JSONDecodeError:
+        pass
+    check("health/ready reports ready", ready, f"(http={st}, status={readiness_status})")
 
     st, body, _ = req("/model/info")
     ok, detail = st == 200, f"({st})"
@@ -70,7 +75,7 @@ def main():
     acao = next((v for k, v in hdrs.items() if k.lower() == "access-control-allow-origin"), "")
     ok = st in (200, 204) and ORIGIN in acao
     check("CORS preflight allows Pages origin", ok,
-          f"(http={st}, ACAO={acao or 'missing - set CREDITFLOW_CORS_ORIGINS on Render'})")
+          f"(http={st}, ACAO={acao or 'missing - set CREDITFLOW_CORS_ORIGINS on Azure Container Apps'})")
 
     st, _, _ = req("/applications")
     check("auth gate (GET /applications -> 401 without key)", st == 401, f"({st})")

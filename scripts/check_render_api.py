@@ -1,14 +1,12 @@
-"""Check Render API — list services, verify creditflow-api exists.
+"""Legacy manual utility to inspect a Render account.
 
-CLASSIFICATION: DEPLOYMENT / manual ops tool. Not imported by runtime or
-tests and not run by CI — invoked by hand during Render deploy verification
-(canonical demo deployment). Kept for operators, not part of the canonical
-business flow.
+This utility is unrelated to the canonical Azure Container Apps deployment.
+It is not imported by runtime/tests and is not run by CI.
 
 Reads the API key from RENDER_API_KEY (environment) or a local `.env` file.
 The key is NEVER hardcoded here — see docs/deployment.md security notes.
 
-Usage:
+Legacy usage (only if separately operating a Render preview):
     RENDER_API_KEY=rnd_xxx python scripts/check_render_api.py
     # or put RENDER_API_KEY=rnd_xxx into .env (gitignored) and just run:
     python scripts/check_render_api.py

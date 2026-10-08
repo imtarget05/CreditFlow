@@ -2,14 +2,7 @@ name: Deploy to Azure Container Apps
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main, master]
-    paths:
-      - 'backend/**'
-      - 'pipeline/**'
-      - 'models/**'
-      - 'requirements.txt'
-      - '.github/workflows/deploy-azure.yml'
+  workflow_call:
 
 permissions:
   contents: read
@@ -47,7 +40,22 @@ jobs:
           pip install pytest
 
       - name: Run Test Suite
-        run: PYTHONPATH=. pytest tests/test_features.py tests/test_threshold.py tests/test_drift.py -q
+        run: PYTHONPATH=. pytest tests/ -q -m "not integration and not slow and not live and not infra" --strict-markers
+
+      - name: Enforce the existing production simulation gate
+        env:
+          CREDITFLOW_ENV: production
+        run: |
+          python - <<'PY'
+          from pipeline.agent.nodes import fetch_gateways
+          try:
+              fetch_gateways({"customer_data": {}, "audit_trail": []})
+          except RuntimeError as exc:
+              assert "GATEWAY_UNAVAILABLE" in str(exc), str(exc)
+              print("OK: production rejects simulated gateways")
+          else:
+              raise SystemExit("production must fail closed on simulated gateways")
+          PY
 
       - name: Log in to Azure (using AZURE_CREDENTIALS secret)
         uses: azure/login@v2
@@ -57,9 +65,24 @@ jobs:
 
       - name: Build & Deploy via Azure CLI
         if: env.AZURE_CREDENTIALS != ''
+        env:
+          CREDITFLOW_API_KEY: ${{ secrets.CREDITFLOW_API_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
+          if [ -z "${CREDITFLOW_API_KEY:-}" ]; then
+            echo "::error::CREDITFLOW_API_KEY secret is required to deploy the protected Azure API."
+            exit 1
+          fi
           chmod +x deploy/scripts/deploy-azure.sh
           ./deploy/scripts/deploy-azure.sh
+
+      - name: Azure production readiness and API smoke
+        if: env.AZURE_CREDENTIALS != ''
+        env:
+          CREDITFLOW_SMOKE_BASE: https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io
+          CREDITFLOW_SMOKE_API_KEY: ${{ secrets.CREDITFLOW_API_KEY }}
+        run: python3 scripts/smoke_production.py
 
       - name: Report deploy status
         if: always()
@@ -68,5 +91,5 @@ jobs:
             echo "::error title=Azure deploy NOT run::AZURE_CREDENTIALS is not configured; deploy steps were skipped. This run verified the test subset only and is a FAILED deploy." >&2
             exit 1
           else
-            echo "Azure login + deploy ran with the configured AZURE_CREDENTIALS secret."
+            echo "AZURE_CREDENTIALS is configured. Check the test, login, deploy and smoke step results above to determine release status."
           fi

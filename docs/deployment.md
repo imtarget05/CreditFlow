@@ -3,53 +3,42 @@
 ## Architecture Overview
 
 ```
-GitHub Pages (frontend) ──→ Render (FastAPI backend) ──→ Cloudflare Workers AI (GenAI explain)
+GitHub Pages (frontend) ──→ Azure Container Apps (FastAPI backend) ──→ Cloudflare Workers AI (GenAI explain)
 (+ GHCR Docker images: api + web, auto-push từ cd.yml)
 ```
 
 | Component | Platform | URL |
 |-----------|----------|-----|
 | Frontend (React/Vite SPA) | GitHub Pages | `https://imtarget05.github.io/CreditFlow/` |
-| Backend (FastAPI + model) | Render Free Tier | `https://creditflow-api-9z1v.onrender.com` |
+| Backend (FastAPI + model) | Azure Container Apps | `https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io` |
 | LLM explanations | Cloudflare Workers AI | REST API (called by backend, NOT Pages) |
 | Docker images | GHCR | `ghcr.io/<owner>/creditflow/creditflow-{api,web}` |
 
 > Lịch sử: Cloudflare Pages cũ `creditflow-4nu.pages.dev` đã decommission (trả 403) — không còn trong stack, chỉ giữ 1 dòng này làm tham chiếu.
 
-## Step 1: Deploy Backend to Render
+## Step 1: Deploy Backend to Azure Container Apps
 
-1. Push this repo to GitHub/GitLab.
-2. Go to https://dashboard.render.com → **New +** → **Web Service**.
-3. Connect your repo and select the `render.yaml` at the root (auto-detected).
-4. Verify settings (giữ nguyên `render.yaml`):
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `uvicorn backend.app:app --host 0.0.0.0 --port $PORT`
-   - **Health Check Path**: `/health`
-   - **Plan**: Free
-   - **Python**: `PYTHON_VERSION` = `3.12.7`
-5. Add env vars in the Render dashboard:
-   - `PYTHON_VERSION` = `3.12.7`
-   - `MLFLOW_DISABLE_AGENT_HINT` = `1`
-   - `CREDITFLOW_LLM_PROVIDER` = `cloudflare`
-   - `CLOUDFLARE_MODEL` = `@cf/meta/llama-3.2-1b-instruct`
-   - `CLOUDFLARE_ACCOUNT_ID` = *(your Cloudflare account ID — sync:false, dashboard only)*
-   - `CLOUDFLARE_API_TOKEN` = *(your Cloudflare API token — sync:false, dashboard only)*
-6. Click **Create Web Service** and wait for the first deploy.
-
-> Note: Render free-tier có cold-start ~30s ở request đầu sau sleep — đây là hành vi bình thường, không retry ngầm.
+1. Push this repo to GitHub.
+2. Configure the `AZURE_CREDENTIALS` GitHub Actions secret and `CREDITFLOW_API_KEY` secret.
+3. Run `.github/workflows/deploy-azure.yml` manually or push a backend change to `main`.
+   The workflow deploys the API, sets the key as an Azure Container Apps secret
+   (never a plain-text env var), enables production fail-closed auth, and runs a
+   smoke test against the canonical endpoint.
+4. Set Cloudflare Workers AI credentials in GitHub Actions secrets if the GenAI
+   explanation provider is enabled.
 
 ### Verify Backend
 
 ```bash
-curl https://creditflow-api-9z1v.onrender.com/health
+curl https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io/health/live
 # {"status":"ok","model_loaded":true,"model_version":"...","model_name":"..."}
 
-curl -X POST https://creditflow-api-9z1v.onrender.com/predict \
+curl -X POST https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io/predict \
   -H "Content-Type: application/json" \
   -d '{"income":8000000,"age":32,"employment_years":4,"loan_amount":12000000,"loan_term":36,"existing_debt":3500000,"credit_history":5,"previous_defaults":0}'
 # 200 + {"risk_probability":...,"decision":"APPROVE","model_version":"...","reasons":[...]}
 
-curl https://creditflow-api-9z1v.onrender.com/model/info
+curl https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io/model/info
 # {"model_version":"...","model_name":"..."}
 ```
 
@@ -61,7 +50,7 @@ curl https://creditflow-api-9z1v.onrender.com/model/info
    - Upload `frontend/dist` via `actions/upload-pages-artifact@v3`
    - Deploy via `actions/deploy-pages@v4` (branch `gh-pages`)
 3. `frontend/vite.config.js` giữ `base: '/CreditFlow/'` để routing/assets đúng sub-path.
-4. `VITE_API_BASE=https://creditflow-api-9z1v.onrender.com` (baked at build time — build lại nếu đổi URL backend).
+4. The workflow bakes the canonical Azure Container Apps URL into `VITE_API_BASE`.
 5. SPA fallback: `frontend/public/404.html` (redirect mọi deep path lạ về `/CreditFlow/`) đã commit — xử lý unknown-path refresh trên GitHub Pages. Lưu ý: GitHub Pages trả HTTP 404 kèm nội dung trang redirect (browser chạy JS sẽ chuyển về app). `_redirects` chỉ là di sản Cloudflare Pages, không có tác dụng trên GitHub Pages — giữ lại để tham chiếu, không dùng cho fallback.
 
 ### Verify Frontend
@@ -72,7 +61,7 @@ curl -s -o /dev/null -w "%{http_code}\n" https://imtarget05.github.io/CreditFlow
 ```
 
 Open `https://imtarget05.github.io/CreditFlow/` in a browser and test the Predict / Model / Monitoring tabs.
-Predict E2E qua backend Render trả 200 APPROVE với ideal-profile payload.
+Predict E2E qua Azure backend trả 200 với ideal-profile payload.
 
 ## Step 3: Cloudflare Workers AI (GenAI Explain Layer)
 
@@ -84,7 +73,7 @@ Workers AI chỉ phục vụ GenAI explain — không còn liên quan tới fron
 1. Get your **Account ID** from https://dash.cloudflare.com/profile
 2. Create an **API Token** at https://dash.cloudflare.com/profile/api-tokens
    - Permissions needed: `Account - Cloudflare Workers AI: Edit`
-3. Set the following env vars on Render (Step 1, item 5 — Render dashboard, never in repo):
+3. Set the following env vars in Azure Container Apps (via Key Vault/ACA secrets, never in repo):
    - `CLOUDFLARE_ACCOUNT_ID`
    - `CLOUDFLARE_API_TOKEN`
    - `CLOUDFLARE_MODEL` = `@cf/meta/llama-3.2-1b-instruct` (free tier default)
@@ -92,36 +81,40 @@ Workers AI chỉ phục vụ GenAI explain — không còn liên quan tới fron
 ### Verify
 
 ```bash
-curl https://creditflow-api-9z1v.onrender.com/llm/info
+curl https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io/llm/info
 # {"provider":"cloudflare","model":"@cf/meta/llama-3.2-1b-instruct","prompt_version":"...","configured":true}
 ```
 
-If `configured` is `false`, check the Render env vars are set correctly.
+If `configured` is `false`, check the Azure Container Apps configuration.
 
 ## Environment Variables Reference
 
-### Render (Backend)
+### Azure Container Apps (Backend)
 
 | Variable | Required | Default | Notes |
 |----------|----------|---------|-------|
-| `PYTHON_VERSION` | Yes | `3.12.7` | Set in dashboard |
-| `MLFLOW_DISABLE_AGENT_HINT` | Yes | `1` | Silence MLflow telemetry |
-| `CREDITFLOW_LLM_PROVIDER` | Yes | `cloudflare` | LLM provider selector |
-| `CLOUDFLARE_ACCOUNT_ID` | For GenAI | — | **Never commit** — set in Render dashboard (`sync:false`) |
-| `CLOUDFLARE_API_TOKEN` | For GenAI | — | **Never commit** — set in Render dashboard (`sync:false`) |
-| `CLOUDFLARE_MODEL` | No | `@cf/meta/llama-3.2-1b-instruct` | Free-tier friendly |
+| `CREDITFLOW_API_KEY` | Yes | — | Stored as ACA secret `creditflow-api-key`; container references it using `secretref:creditflow-api-key`. |
+| `CREDITFLOW_CORS_ORIGINS` | Yes | `https://imtarget05.github.io` | Explicit Pages origin allow-list. |
+| `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` | For GenAI | — | **Never commit** — passed to ACA secret references by the Azure deploy workflow. |
 
 ### GitHub Pages (Frontend)
 
 | Variable | Required | Default | Notes |
 |----------|----------|---------|-------|
-| `VITE_API_BASE` | Yes | — | Baked at build time; must point to Render URL (`https://creditflow-api-9z1v.onrender.com`); local fallback is `/api`. Set via repo var `VITE_API_BASE` in `cd.yml` (defaults to the Render URL) |
-| `VITE_API_KEY` | For ledger/approve tabs | — | Baked at build time from repo secret `CREDITFLOW_API_KEY` — **must equal the Render `CREDITFLOW_API_KEY` value**. Absent => `/applications`, `/disbursements`, approve calls 401 by design (fail-closed, see `backend/security.py`) |
+| `VITE_API_BASE` | Yes | Azure Container Apps URL | Baked at build time by `cd.yml`; no secret is passed to the Pages build. |
+
+The Pages build must not receive `CREDITFLOW_API_KEY` or any other shared API
+credential. Browser-delivered Vite variables are public, even when sourced from
+GitHub Actions secrets. Consequently, the protected ledger and approval calls
+remain unavailable from the static frontend and return 401 by design. A
+user-authenticated server-side proxy is a separate future requirement; do not
+reintroduce a shared key into the frontend bundle.
 
 ## Security Notes
 
-- **Never commit real secrets** to the repo. Use the Render dashboard or a `.env` file (gitignored).
-- `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` are marked `sync: false` in `render.yaml` so Render stores them as secrets.
+- **Never commit real secrets** to the repo. Use Azure Container Apps/Key Vault or a `.env` file (gitignored).
+- **Never expose `CREDITFLOW_API_KEY` in the Pages build or browser bundle.** The old committed frontend value must be treated as compromised and rotated in the backend/hosting dashboards if it matches any active credential; repo history is not rewritten by this remediation.
+- `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` are stored as Azure Container Apps secrets; GitHub Actions passes them only to the Azure deploy workflow.
 - `.env` is gitignored. Copy `.env.example` to `.env` for local development.
 - The `docker-compose.yml` loads from `.env.example` via `env_file` — update that file with your local placeholders if needed.
 
@@ -147,7 +140,7 @@ Docker images `creditflow-api` / `creditflow-web` cũng được auto-push lên 
 | Issue | Fix |
 |-------|-----|
 | Frontend 404 on refresh (unknown deep path) | Đã xử lý: `frontend/public/404.html` (redirect về `/CreditFlow/`) + bước copy trong `cd.yml` (`cp public/404.html dist/404.html`) đảm bảo artifact có 404.html. Đây là giới hạn đã biết của GitHub Pages: unknown deep path trả HTTP 404 **cùng nội dung trang redirect** (browser có JS tự chuyển về app) — app là single-view không router nên không mất trạng thái route. `_redirects` là file Cloudflare-Pages-only, GitHub Pages bỏ qua — giữ lại chỉ để tham chiếu |
-| Frontend can't reach API | Confirm `VITE_API_BASE` lúc build trỏ đúng Render URL (`https://creditflow-api-9z1v.onrender.com`); build lại sau khi đổi env |
-| Backend 502 / request đầu ~30s | Render free-tier cold-start sau sleep — chờ rồi retry 1 lần; nếu vẫn 502, check logs in Render dashboard, ensure `requirements.txt` installs cleanly |
-| CORS errors in browser | Set `CREDITFLOW_CORS_ORIGINS=https://imtarget05.github.io` on Render (dashboard, comma-separated; `render.yaml` now defaults to it), redeploy, then hard-refresh the Pages app. Never use `*` — the API refuses to start with it |
-| LLM explanations return template | Verify `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in Render dashboard, then re-check `/llm/info` (`configured` phải `true`) |
+| Frontend can't reach API | Confirm the Pages build uses the canonical Azure URL and that ACA ingress allows HTTPS traffic. |
+| Backend unavailable | Check Azure Container Apps revision and `/health/ready` logs/status. |
+| CORS errors in browser | Confirm `CREDITFLOW_CORS_ORIGINS=https://imtarget05.github.io` in the ACA configuration. Never use `*` — the API refuses to start with it. |
+| LLM explanations return template | Verify Cloudflare secrets in ACA and re-check `/llm/info` (`configured` phải `true`). |

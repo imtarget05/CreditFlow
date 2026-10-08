@@ -13,12 +13,20 @@ is required: ``langgraph==1.2.11`` does not ship
 ``langgraph-checkpoint-sqlite`` package), so this stdlib implementation
 keeps the demo self-contained while closing the restart gap.
 
+Shared storage: one local file is still *one process*.  When the API runs
+more than one replica (or restarts on a container that lost its volume) the
+paused workflow must live somewhere both processes reach — see
+:func:`create_checkpointer`, which switches on ``DATABASE_URL`` and falls back
+to this file saver when the shared driver package is absent.
+
 Demo scope: single-process, pickle file, atomic replace (tmp + os.replace).
 """
 from __future__ import annotations
 
 import base64
+import importlib
 import json
+import logging
 import os
 import pickle
 import threading
@@ -38,6 +46,8 @@ from langgraph.checkpoint.memory import (
     InMemorySaver,
 )
 
+logger = logging.getLogger(__name__)
+
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CHECKPOINT_PATH = ROOT / "data" / "creditflow_checkpoints.pkl"
 
@@ -46,6 +56,156 @@ def checkpoint_path() -> Path:
     """Resolve the checkpoint file path (env override lets tests isolate)."""
     env = os.environ.get("CREDITFLOW_CHECKPOINT_DB")
     return Path(env) if env else DEFAULT_CHECKPOINT_PATH
+
+
+# ---------------------------------------------------------------------------
+# Shared (multi-process) checkpoint storage
+# ---------------------------------------------------------------------------
+# The file saver above is single-process by construction: one JSON snapshot on
+# one local disk.  Scaling the API to >1 replica — or restarting on a
+# container that lost its volume — needs the paused ``human_approval`` state
+# in a store every process can reach.  langgraph ships those savers in
+# separate packages (langgraph-checkpoint-postgres / -sqlite) that this repo
+# deliberately does not install, so the switch is opt-in via ``DATABASE_URL``:
+# configure it and the shared saver is used; leave it unset and nothing
+# changes at all.  When the store cannot be opened the API still serves —
+# it logs loudly and keeps the file saver — unless the operator demands
+# shared storage (CREDITFLOW_CHECKPOINT_SHARED_REQUIRED=1), in which case a
+# silent downgrade to local files would be worse than failing fast.
+_SHARED_BACKENDS = {
+    "postgres": ("langgraph.checkpoint.postgres", "PostgresSaver", "postgres"),
+    "postgresql": ("langgraph.checkpoint.postgres", "PostgresSaver", "postgres"),
+    "sqlite": ("langgraph.checkpoint.sqlite", "SqliteSaver", "sqlite"),
+}
+
+# Pip-name to install when the operator wants the real shared backend.
+_SHARED_PACKAGES = {
+    "langgraph.checkpoint.postgres": "langgraph-checkpoint-postgres",
+    "langgraph.checkpoint.sqlite": "langgraph-checkpoint-sqlite",
+}
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+class SharedCheckpointUnavailable(RuntimeError):
+    """``DATABASE_URL`` names shared storage that could not be opened."""
+
+
+def shared_required() -> bool:
+    """True when shared checkpoint storage is mandatory (fail closed)."""
+    return (
+        os.environ.get("CREDITFLOW_CHECKPOINT_SHARED_REQUIRED", "")
+        .strip()
+        .lower()
+        in _TRUTHY
+    )
+
+
+def _url_scheme(url: str) -> str:
+    return url.split("://", 1)[0].strip().lower() if "://" in url else ""
+
+
+def shared_database_url() -> str:
+    """Return ``DATABASE_URL`` only when it names *shared* checkpoint storage.
+
+    Shared means another process can reach the same store: a Postgres
+    connection string (``postgres://`` / ``postgresql://``) or SQLite, given
+    either as a ``sqlite:///...`` URL or as a bare ``*.db`` path.  Anything
+    else (empty, ``mysql://``, a plain word) returns ``""`` so the file saver
+    stays in charge — an accidental value must never silently redirect
+    startup to a different backend.
+    """
+    url = (os.environ.get("DATABASE_URL") or "").strip()
+    if not url:
+        return ""
+    scheme = _url_scheme(url)
+    if scheme in _SHARED_BACKENDS:
+        # An in-memory SQLite URL is per-process, i.e. not shared at all.
+        if scheme == "sqlite" and _is_memory_sqlite(url):
+            return ""
+        return url
+    if not scheme and url.lower().endswith((".db", ".sqlite", ".sqlite3")):
+        return f"sqlite:///{url}"
+    return ""
+
+
+def _is_memory_sqlite(url: str) -> bool:
+    target = url.split("://", 1)[1].strip().strip("/")
+    return target in ("", ":memory:")
+
+
+def _open_shared_saver(url: str) -> Any:
+    """Open the langgraph saver for a shared URL and create its schema.
+
+    Imports lazily so a deployment without the driver package still imports
+    this module (the ledger does the same with psycopg).  ``setup()`` is
+    idempotent DDL (``CREATE TABLE IF NOT EXISTS``), so calling it on every
+    process start is the documented langgraph pattern.  Any failure — missing
+    package, bad credentials, unreachable host — propagates to the caller,
+    which decides between fallback and fail-closed.
+    """
+    backend = _url_scheme(url)
+    if backend not in _SHARED_BACKENDS:
+        raise SharedCheckpointUnavailable(
+            f"unsupported checkpoint URL scheme {backend!r}"
+        )
+    module_name, class_name, _label = _SHARED_BACKENDS[backend]
+    module = importlib.import_module(module_name)
+    saver = getattr(module, class_name).from_conn_string(url)
+    setup = getattr(saver, "setup", None)
+    if callable(setup):
+        setup()
+    return saver
+
+
+def create_checkpointer(path: str | Path | None = None) -> tuple[Any, str]:
+    """Build the workflow checkpointer: shared when configured, else the file.
+
+    Returns ``(saver, backend)`` with ``backend`` in ``{"postgres",
+    "sqlite", "file"}`` so startup can record (and operators can read) which
+    store actually keeps the paused workflows.
+
+    Selection:
+
+    1. ``DATABASE_URL`` points at Postgres / SQLite → that shared saver.
+    2. It points elsewhere, or is unset → :class:`FileCheckpointSaver`
+       (today's behaviour, unchanged).
+    3. It points at shared storage that cannot be opened → warn loudly and
+       fall back to the file saver, *except* when
+       ``CREDITFLOW_CHECKPOINT_SHARED_REQUIRED=1``, where a silent downgrade
+       to a file that only one replica can see would hide a broken
+       multi-replica deployment: then :class:`SharedCheckpointUnavailable`
+       is raised instead.
+    """
+    url = shared_database_url()
+    if not url:
+        return FileCheckpointSaver(path), "file"
+
+    scheme = _url_scheme(url)
+    backend = _SHARED_BACKENDS[scheme][2]
+    try:
+        return _open_shared_saver(url), backend
+    except Exception as exc:
+        package = _SHARED_PACKAGES[_SHARED_BACKENDS[scheme][0]]
+        reason = (
+            "shared checkpoint storage requested (DATABASE_URL scheme "
+            f"{scheme!r}) but could not be opened: {exc!r}"
+        )
+        if shared_required():
+            raise SharedCheckpointUnavailable(
+                f"{reason}. Fix DATABASE_URL or install {package} "
+                f"(pip install {package}); CREDITFLOW_CHECKPOINT_SHARED_REQUIRED=1 "
+                "forbids the single-process file fallback."
+            ) from exc
+        logger.warning(
+            "%s. Falling back to FileCheckpointSaver (single-process scope). "
+            "Install %s (pip install %s) or unset DATABASE_URL to silence this; "
+            "set CREDITFLOW_CHECKPOINT_SHARED_REQUIRED=1 to fail fast instead.",
+            reason,
+            package,
+            package,
+        )
+        return FileCheckpointSaver(path), "file"
 
 
 # Single-process store lock — LangGraph dispatches `put` and `put_writes`

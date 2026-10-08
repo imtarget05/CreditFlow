@@ -555,7 +555,7 @@ def execute(state: CreditState) -> dict:
     agreement_pdf = agreement.legal_text if hasattr(agreement, "legal_text") else str(agreement)
     
     trail.append(_audit_entry("execute", AUDIT_SUCCESS, "Generated VietQR & Loan Agreement"))
-    trail.append(_audit_entry("execute", AUDIT_SUCCESS, f"approved application {app_id} — action logged (disbursement stub)"))
+    trail.append(_audit_entry("execute", AUDIT_SUCCESS, f"approved application {app_id} — disbursement pending — no real transfer executed (stub)"))
     
     return {
         "vietqr_url": vietqr_url,

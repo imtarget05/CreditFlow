@@ -197,3 +197,4 @@ crash.*.log
 
 # Runtime document artifacts (upload/applications flow; never committed).
 data/documents/
+.coverage

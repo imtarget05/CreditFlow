@@ -17,7 +17,7 @@ Excluded with cause: `test_models.py` + `test_model_update.py` (import `xgboost`
 fell back to an LLVM source build, killed as impractical; sklearn-bundled libomp is
 version-incompatible `___kmpc_dispatch_deinit`) → env-BLOCKED, non-gating for CF-001→022
 (factory-comparison coverage only). `llm-gateway/tests` needs its own env (`No module named 'server'`).
-Skips (reasoned): `test_deploy_pages.py` ×3 (npm absent exit 127; live Render unreachable),
+Skips (reasoned): `test_deploy_pages.py` ×3 (npm absent exit 127; live Azure API unreachable),
 `test_llm_provider.py` ×2 (vcrpy not installed).
 
 ## How to record a run

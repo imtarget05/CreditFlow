@@ -92,10 +92,12 @@ jobs:
         run: python -m pytest tests/ -q -m "slow and not integration and not live and not infra" --strict-markers
 
   coverage:
-    # Coverage ratchet, phase 1: unmeasured baseline → report-only (NO
-    # fail-under) until a baseline is locked. No codecov upload: this repo
-    # does not use codecov (coverage.xml kept as a CI artifact instead).
-    name: Backend — coverage (report-only, no fail-under)
+    # Coverage ratchet, phase 3: baseline locked 2026-10-08 at TOTAL 80%
+    # (fast suite: 413 passed, 2 skipped). Gate set at 75% (5pt buffer) with
+    # --cov-fail-under=75 so real backslides fail loudly; raise toward 80%
+    # once gateway/statement-parser gaps (55-62%) are covered. No codecov
+    # upload: coverage.xml kept as a CI artifact instead.
+    name: Backend — coverage (gated at 75%, baseline 80%)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -112,8 +114,8 @@ jobs:
           pip install -r requirements-dev.txt
           pip install pytest-cov
 
-      - name: Run tests with coverage (fast only, report-only)
-        run: python -m pytest tests/ -q -m "not integration and not slow and not live and not infra" --strict-markers --cov=pipeline --cov=backend --cov=src --cov-report=term-missing --cov-report=xml
+      - name: Run tests with coverage (fast only, gated)
+        run: python -m pytest tests/ -q -m "not integration and not slow and not live and not infra" --strict-markers --cov=pipeline --cov=backend --cov=src --cov-fail-under=75 --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4

@@ -20,14 +20,41 @@ Designed with enterprise requirements in mind, it features tamper-evident audit 
 |---|---|---|
 | Frontend (GitHub Pages) | https://imtarget05.github.io/CreditFlow/ | Deployed by `cd.yml` (`actions/deploy-pages`) |
 | API (Azure Container Apps) | https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io | `creditflow-api` container app, scale 0-1, /health/live + /health/ready + /model/info verified 2026-10-07 |
-| API (Render, canonical) | https://creditflow-api-9z1v.onrender.com | `/health/live`, `/health/ready`, `/model/info` respond (logistic_regression_v001, threshold 0.20); business endpoints return `401` until `CREDITFLOW_API_KEY` is configured — fail-closed by design |
 
 Owner actions (dashboards — pipeline code is ready):
 
-- Render: set `CREDITFLOW_API_KEY` + `CREDITFLOW_CORS_ORIGINS=https://imtarget05.github.io`.
-- GitHub: add secret `CREDITFLOW_API_KEY` (same demo token; baked into the Pages
-  bundle as `VITE_API_KEY` — a **demo access token**, not a security boundary)
-  and `RENDER_DEPLOY_HOOK` (the CD backend job fails loudly until it exists).
+- Azure: confirm the `creditflow-api` Container App is deployed and the API key has
+  been rotated after removing the old key from the Pages bundle; use the Azure
+  dashboard to check health and environment configuration.
+- GitHub: configure `AZURE_CREDENTIALS` and `CREDITFLOW_API_KEY` as Actions secrets
+  for API deployment only. The key is sent to Azure as an ACA secret and used by
+  server-side smoke checks; it is never passed to the Pages build/browser bundle.
+- Keep the Azure app's existing `CREDITFLOW_ENV` mode unchanged during this
+  alignment; production mode intentionally disables simulated CIC/bank gateways
+  and requires a separate real-gateway readiness decision.
+- The GitHub Pages app can score applications, but ledger reads and human approval
+  remain locked until a user-authenticated server-side flow is implemented. Do not
+  put a shared key in this static frontend.
+
+> **Note — authentication today is one shared API key, not per-user identity.**
+> Every sensitive route (ledger reads, state/audit reads, human approval) is
+> protected by a single shared secret (`CREDITFLOW_API_KEY`, sent in
+> `X-CreditFlow-API-Key`). There is **no user table, no OAuth/OIDC provider and
+> no per-user RBAC**: every caller holding the key presents the same principal,
+> and the approver identity recorded in the audit trail (`approver_id`) is a
+> **deployment-wide configuration value** (`CREDITFLOW_API_KEY_ID`, e.g.
+> `supervisor_on_duty`) — it is never the identity of the individual human who
+> clicked approve. Consequences, stated honestly: an approval cannot be
+> attributed to a specific person, one leaked key gives every holder the same
+> authority, and revoking one user means rotating the key for all of them.
+> This is sufficient for a portfolio demo plane; it is **not** sufficient for a
+> live lending operation. Before a real production go-live the following are
+> required: (1) per-user identities via OIDC/OAuth2 or an internal user
+> directory, with per-session credentials instead of one shared header secret;
+> (2) RBAC mapping an authenticated user to a credit authority level
+> (`UNDERWRITER_L1` / `RISK_COMMITTEE_L2`) instead of a single role configured
+> per deployment; (3) audit records that log the authenticated user id on every
+> approval; (4) per-user revocation and credential rotation.
 
 ---
 
@@ -73,6 +100,14 @@ graph TD
     K --> L[SHA-256 Ledger Hash]
 ```
 
+> **Note — `execute()` is a disbursement stub (decision support only).**
+> The LangGraph `execute` node (`pipeline/agent/nodes.py`) currently only
+> generates the VietQR payload + loan-agreement document and appends audit
+> entries to the trail. It does **not** perform any real money transfer —
+> CreditFlow is a decision-support system, and the audit message records
+> `disbursement pending — no real transfer executed (stub)` to say so
+> explicitly. Wiring a real payment rail is a separate, future decision.
+
 ---
 
 ## 🛠 Tech Stack
@@ -85,7 +120,7 @@ graph TD
 | **Workflow & GenAI** | LangGraph, LangChain, Cloudflare Workers AI (Llama 3.2-1b) |
 | **Frontend** | React 18, Vite, Vanilla CSS |
 | **Storage & Ledger** | SQLite (with SHA-256 tamper-evident hashing) |
-| **DevOps** | Docker, Docker Compose, GitHub Actions, Render, GitHub Pages |
+| **DevOps** | Docker, Docker Compose, GitHub Actions, Azure Container Apps, GitHub Pages |
 
 ---
 
@@ -180,6 +215,10 @@ An approval is recorded against the authority the workflow itself demanded:
 a `RISK_COMMITTEE_L2` application cannot be approved with an `UNDERWRITER_L1`
 key (403, no disbursement written).
 
+> **Known limitation:** the key authenticates a *service or team*, not a person
+> — see the shared-API-key note under Production status for what must exist
+> (per-user identity + RBAC) before a real production deployment.
+
 ---
 
 ## 📂 Project Structure
@@ -215,7 +254,7 @@ key (403, no disbursement written).
 ├── tests/                  # 426 tests (405 fast + 18 slow + 3 production integration; verified baseline below)
 ├── data/                   # Synthetic dataset (5k rows, seed 42)
 ├── docker-compose.yml      # Full-stack orchestration
-└── render.yaml             # Cloud deployment configurations
+└── render.yaml             # Deprecated preview blueprint (empty)
 ```
 
 ---
@@ -228,9 +267,13 @@ The project maintains a high standard of reliability with a comprehensive test s
 python -m pytest tests/ -v
 ```
 
-**Current verified baseline (2026-10-07, clean clone of `b4b031b`):**
+The canonical production API is Azure Container Apps. The production
+integration tests require the endpoint to be reachable and do not deploy it.
+
+**Previously verified baseline (2026-10-07, clean clone of `b4b031b`):**
 426 passed, 0 failed, 0 skipped on Python 3.12.13 with npm available and the
-production Render backend warm/reachable.
+then-configured production service reachable. This is historical baseline data,
+not evidence for the Azure rollout changed in this worktree.
 
 | Tier | Tests |
 |---|---|
@@ -238,11 +281,10 @@ production Render backend warm/reachable.
 | Slow (full LangGraph + model runs) | 18 |
 | Production integration (`-m integration`) | 3 |
 
-The three production integration tests (`tests/test_deploy_pages.py`) may skip
-when `npm` is unavailable or when the Render free-tier backend is cold or
-unreachable (first request after idle can take ~20-60 s, longer than the test
-timeout). That is an infrastructure-availability condition, not a code
-regression. `live` / `infra` tests only run with `LIVE_TESTS=1`.
+The production integration tests (`tests/test_deploy_pages.py`) may skip when
+`npm` is unavailable or the Azure API cannot be reached. That is an
+infrastructure-availability condition, not a code regression. `live` / `infra`
+tests only run with `LIVE_TESTS=1`.
 
 ---
 
@@ -259,9 +301,9 @@ The system was trained on a **5,000-row synthetic proxy dataset** (seed `42`, ~1
 - **Processing**: Rule Filter DTI/LTI + TF-IDF cosine inference (local, offline-safe).
 - **Policy Guard cứng** (`pipeline/agent/explanations.py:is_public_cloud`): `CONFIDENTIAL` tuyệt đối chặn gửi ra public cloud (OpenAI/Groq/Cloudflare/Anthropic/Google) → route về Private vLLM (`ollama`/`local_vllm`) hoặc deterministic template fallback. Public cloud chỉ dùng cho data PUBLIC hoặc tắt hẳn.
 - **Compliance**: Banking Secrecy / GDPR / SBV — CONFIDENTIAL never leaks. Xem `docs/DEPLOYMENT_PRIVATE_ONPREM.md`.
-- **Planes**: `render.yaml` + GitHub Pages = **portfolio demo plane** (free tier,
-  PUBLIC data only — see §Production status); enterprise production =
-  **PRIVATE ON-PREM** như trên. Public cloud env chỉ dành cho data PUBLIC.
+- **Planes**: Azure Container Apps + GitHub Pages = **portfolio demo plane**;
+  enterprise deployment target = **PRIVATE ON-PREM** như trên. Public cloud env
+  chỉ dành cho data PUBLIC.
 
 ---
 
