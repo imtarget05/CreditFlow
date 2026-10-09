@@ -192,6 +192,67 @@ def test_bare_sqlite_path_routes_to_the_sqlite_saver(tmp_path, monkeypatch):
     assert saver.url == f"sqlite:///{path}"
 
 
+def test_from_conn_string_context_manager_is_unwrapped_and_stays_open(
+    monkeypatch,
+):
+    """The real langgraph-checkpoint-postgres returns a *context manager*.
+
+    ``PostgresSaver.from_conn_string()`` is decorated with
+    ``@classmethod @contextmanager`` and yields the saver.  Using it naively
+    hands the graph a ``_GeneratorContextManager`` (not a BaseCheckpointSaver)
+    and the ``with`` body would close the connection on ``__exit__``.
+    ``_open_shared_saver`` must return the *yielded* saver, run ``setup()``
+    on it, and keep the context open for the process lifetime.
+    """
+    events: list[str] = []
+
+    class YieldedSaver:
+        def __init__(self, url: str) -> None:
+            self.url = url
+            self.setup_calls = 0
+
+        def setup(self) -> None:
+            self.setup_calls += 1
+            events.append("setup")
+
+    class FakeCM:
+        """Stands in for contextlib._GeneratorContextManager."""
+
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        def __enter__(self) -> YieldedSaver:
+            events.append("enter")
+            return YieldedSaver(self.url)
+
+        def __exit__(self, *exc) -> bool:
+            events.append("exit")
+            return False
+
+    class _FakeModule:
+        pass
+
+    module = _FakeModule()
+    module.PostgresSaver = type(
+        "PostgresSaver",
+        (),
+        {
+            "from_conn_string": classmethod(lambda cls, url: FakeCM(url)),
+        },
+    )
+    monkeypatch.setitem(sys.modules, "langgraph.checkpoint.postgres", module)
+
+    saver = checkpointer_module._open_shared_saver(POSTGRES_URL)
+
+    assert isinstance(saver, YieldedSaver)
+    assert saver.url == POSTGRES_URL
+    assert saver.setup_calls == 1
+    # __exit__ must never run: it would close the connection the graph needs.
+    assert events == ["enter", "setup"]
+    # ...and the context object is kept alive alongside the saver.
+    assert saver.__dict__["_from_conn_string_context"] is not None
+
+
 # ---------------------------------------------------------------------------
 # Degraded: shared requested but unavailable
 # ---------------------------------------------------------------------------

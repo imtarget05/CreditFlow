@@ -3,21 +3,21 @@
 ## Architecture Overview
 
 ```
-Cloudflare Pages (frontend) ──→ Azure Container Apps (FastAPI backend, canonical) ──→ Cloudflare Workers AI (GenAI explain)
+GitHub Pages (frontend) ──→ Azure Container Apps (FastAPI backend, canonical) ──→ Cloudflare Workers AI (GenAI explain)
         │                                        ▲
-        │                                        └── mirror: Render (render.yaml: API + managed Postgres)
+        │                                        └── mirror: Render (render.yaml: API; DATABASE_URL → Neon Postgres)
 (+ GHCR Docker images: api + web, auto-push từ cd.yml)
 ```
 
 | Component | Platform | URL |
 |-----------|----------|-----|
-| Frontend (React/Vite SPA) | Cloudflare Pages | `https://creditflow.pages.dev/` |
+| Frontend (React/Vite SPA) | GitHub Pages | `https://imtarget05.github.io/CreditFlow/` |
 | Backend (FastAPI + model) | Azure Container Apps | `https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io` |
-| Backend mirror + Postgres | Render | `https://creditflow-api-9z1v.onrender.com` |
+| Backend mirror (DB on Neon via `DATABASE_URL`) | Render | `https://creditflow-api-9z1v.onrender.com` |
 | LLM explanations | Cloudflare Workers AI | REST API (called by backend, NOT frontend) |
 | Docker images | GHCR | `ghcr.io/<owner>/creditflow/creditflow-{api,web}` |
 
-> Lịch sử: GH Pages `imtarget05.github.io/CreditFlow` đã thay bằng Cloudflare Pages `creditflow.pages.dev`; CF Pages cũ `creditflow-4nu.pages.dev` đã decommission (403) — chỉ giữ tham chiếu.
+> `creditflow.pages.dev` trả nội dung không thuộc dự án khi kiểm tra ngày 2026-10-09. Không dùng URL này để demo. Workflow hiện deploy về GitHub Pages cho tới khi chủ tài khoản xác minh một Cloudflare Pages project mới.
 
 ## Step 1: Deploy Backend to Azure Container Apps
 
@@ -45,25 +45,27 @@ curl https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapp
 # {"model_version":"...","model_name":"..."}
 ```
 
-## Step 2: Deploy Frontend to Cloudflare Pages
+## Step 2: Deploy Frontend to GitHub Pages
 
-1. Repo Secrets: `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` (đã set cho `cd.yml`).
-2. Push `main` → workflow `.github/workflows/cd.yml` job `deploy-frontend-cloudflare`:
+1. Enable GitHub Pages with GitHub Actions as the source.
+2. Successful `CI` run on `main` → workflow `.github/workflows/cd.yml` job `deploy-frontend-pages` after the Azure gate:
    - `npm ci` + `npm run build` (trong `frontend/`)
-   - `cloudflare/wrangler-action@v4` → `pages deploy frontend/dist --project-name creditflow`
-3. `frontend/vite.config.js` dùng `base: process.env.VITE_BASE || "./"` — base tương đối, hoạt động ở root của Pages (không cần sub-path `/CreditFlow/`).
+   - `actions/deploy-pages@v4` deploys `frontend/dist` and verifies the CreditFlow page title.
+3. `frontend/vite.config.js` dùng `base: process.env.VITE_BASE || "./"` — base tương đối, hoạt động dưới sub-path `/CreditFlow/`.
 4. The workflow bakes the canonical Azure Container Apps URL into `VITE_API_BASE`.
-5. SPA fallback: `frontend/public/_redirects` (`/* /index.html 200`) được Vite copy vào `dist/` — Cloudflare Pages tự serve index cho mọi deep path; `404.html` vẫn được copy kèm làm backup.
+5. GitHub Pages serves `404.html` as the SPA fallback. `_redirects` remains for a future Cloudflare Pages project.
 
 ### Verify Frontend
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" https://creditflow.pages.dev/
+curl -s -o /dev/null -w "%{http_code}\n" https://imtarget05.github.io/CreditFlow/
 # 200
 ```
 
-Open `https://creditflow.pages.dev/` in a browser and test the Predict / Model / Monitoring tabs.
-Predict E2E qua Azure backend trả 200 với ideal-profile payload.
+Open `https://imtarget05.github.io/CreditFlow/` in a browser after the CI-gated
+deployment and test Predict / Model / Monitoring. The bundle live on 2026-10-09
+still targeted the not-ready Render mirror; this is a release blocker until the
+new build is published and its `release.json` revision verified.
 
 ## Step 3: Cloudflare Workers AI (GenAI Explain Layer)
 
@@ -89,17 +91,20 @@ curl https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapp
 
 If `configured` is `false`, check the Azure Container Apps configuration.
 
-## Step 4: Render Mirror (API + Managed Postgres)
+## Step 4: Render Mirror (API + Neon Postgres)
 
 `render.yaml` khai báo mirror plane đầy đủ bên cạnh Azure (canonical):
 
 1. Service web `creditflow-api` — Docker build từ `backend/Dockerfile` (context repo root),
    `healthCheckPath: /health/live`, `autoDeploy: true` (push `main` là redeploy).
-2. Managed Postgres `creditflow-db` — `DATABASE_URL` được wire tự động
-   (`fromDatabase: connectionString`):
+2. `DATABASE_URL` — set trong Render dashboard (`sync: false`, không commit vào repo)
+   bằng connection string **Neon** Postgres (Render không còn tạo managed DB cho
+   blueprint này — không có block `databases:`):
    - `pipeline/storage/ledger.py` → psycopg (ledger rows bền qua restart),
    - `pipeline/agent/checkpointer.py` → `langgraph-checkpoint-postgres` (PostgresSaver —
      paused HITL workflows sống sót qua restart/replica).
+   Không set `DATABASE_URL` → app tự fallback SQLite ledger + file checkpointer
+   (chỉ an toàn cho single-process).
 3. `CREDITFLOW_API_KEY` dùng `generateValue: true` (instance tự chứa, khác secret ACA —
    smoke script nhắm ACA là canonical).
 4. LLM gateway Workers-AI là opt-in: set `CLOUDFLARE_*` + `CREDITFLOW_LLM_PROVIDER=cloudflare`
@@ -121,10 +126,10 @@ Service đã linked sẵn với repo trong Render dashboard (blueprint sync trê
 | Variable | Required | Default | Notes |
 |----------|----------|---------|-------|
 | `CREDITFLOW_API_KEY` | Yes | — | Stored as ACA secret `creditflow-api-key`; container references it using `secretref:creditflow-api-key`. |
-| `CREDITFLOW_CORS_ORIGINS` | Yes | `https://creditflow.pages.dev,https://imtarget05.github.io` | Explicit comma-separated origin allow-list (set by `deploy-azure.sh`; GitHub Pages kept during transition). |
+| `CREDITFLOW_CORS_ORIGINS` | Yes | `https://imtarget05.github.io` | Only the verified GitHub Pages origin is allowed. Render Blueprint must be synced separately. |
 | `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` | For GenAI | — | **Never commit** — passed to ACA secret references by the Azure deploy workflow. |
 
-### Cloudflare Pages (Frontend)
+### GitHub Pages (Frontend)
 
 | Variable | Required | Default | Notes |
 |----------|----------|---------|-------|

@@ -32,6 +32,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -60,10 +61,14 @@ def ledger_path() -> Path:
 
 def _psycopg_connect(url: str):
     """Postgres connection for Neon staging (Plan 02). Import is lazy so
-    local-only installs without psycopg keep working on SQLite."""
-    import psycopg
+    local-only installs without psycopg keep working on SQLite.
 
-    return psycopg.connect(url)
+    ``row_factory=dict_row`` reproduces the ``sqlite3.Row`` access every
+    read below relies on (``row['col']`` / ``dict(row)``)."""
+    import psycopg
+    from psycopg.rows import dict_row
+
+    return psycopg.connect(url, row_factory=dict_row)
 
 
 def _postgres_url() -> str:
@@ -73,11 +78,128 @@ def _postgres_url() -> str:
     return ""
 
 
-def _connect(db_path: Path | None = None) -> sqlite3.Connection:
+def _is_postgres(conn) -> bool:
+    """True for a psycopg connection (or its SQLite-dialect adapter below)."""
+    return not isinstance(conn, sqlite3.Connection)
+
+
+def _schema_change_errors() -> tuple[type[BaseException], ...]:
+    """Errors swallowed by the idempotent ``ALTER TABLE`` migrations.
+
+    SQLite reports a duplicate column as ``sqlite3.OperationalError``;
+    psycopg reports ``psycopg.errors.DuplicateColumn`` (an ``psycopg.Error``).
+    Import stays lazy so SQLite-only installs keep working without psycopg.
+    """
+    errors: list[type[BaseException]] = [sqlite3.OperationalError]
+    try:
+        import psycopg
+    except ImportError:
+        pass
+    else:
+        errors.append(psycopg.Error)
+    return tuple(errors)
+
+
+def _integrity_errors() -> tuple[type[BaseException], ...]:
+    """UNIQUE/PK violations in both dialects (disbursement replay race)."""
+    errors: list[type[BaseException]] = [sqlite3.IntegrityError]
+    try:
+        import psycopg
+    except ImportError:
+        pass
+    else:
+        errors.append(psycopg.errors.IntegrityError)
+    return tuple(errors)
+
+
+# Conflict targets for the tables written with SQLite's ``INSERT OR REPLACE``
+# — the Postgres translation needs them to build ``ON CONFLICT (...)``.
+_REPLACE_CONFLICT_TARGET: dict[str, tuple[str, ...]] = {
+    "idempotency_keys": ("caller_scope", "idem_key"),
+    "outbox_events": ("event_id",),
+    "decision_snapshots": ("decision_id",),
+}
+
+_INSERT_OR_REPLACE_RE = re.compile(
+    r"\s*INSERT\s+OR\s+REPLACE\s+INTO\s+(\w+)\s*\((.*?)\)\s*(VALUES\b.*)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _to_postgres(sql: str) -> str:
+    """Translate SQLite-dialect SQL to the Postgres (psycopg) dialect.
+
+    Only the constructs this module uses are handled — everything else
+    passes through unchanged:
+
+    * ``INSERT OR REPLACE`` → ``INSERT … ON CONFLICT (pk) DO UPDATE``;
+    * ``INTEGER PRIMARY KEY AUTOINCREMENT`` → ``SERIAL PRIMARY KEY``;
+    * ``ADD COLUMN`` → ``ADD COLUMN IF NOT EXISTS`` (idempotent boot);
+    * ``REAL`` → ``DOUBLE PRECISION`` (Postgres ``real`` is float4 — it
+      would corrupt ``loan_amount`` on read-back and make
+      ``verify_disbursement_hash`` report false tampering);
+    * ``?`` placeholders → ``%s`` (psycopg paramstyle).
+    """
+    match = _INSERT_OR_REPLACE_RE.match(sql)
+    if match:
+        table, columns, values = match.group(1), match.group(2), match.group(3)
+        target = _REPLACE_CONFLICT_TARGET.get(table)
+        if target is None:
+            raise ValueError(f"no Postgres conflict target for table {table!r}")
+        names = [c.strip() for c in columns.split(",")]
+        updates = ", ".join(f"{c} = excluded.{c}" for c in names if c not in target)
+        sql = (
+            f"INSERT INTO {table} ({columns}) {values} "
+            f"ON CONFLICT ({', '.join(target)}) DO UPDATE SET {updates}"
+        )
+    sql = re.sub(r"\bREAL\b", "DOUBLE PRECISION", sql)
+    sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+    sql = sql.replace("ADD COLUMN ", "ADD COLUMN IF NOT EXISTS ")
+    return sql.replace("?", "%s")
+
+
+class _PostgresConnection:
+    """Adapter serving this module's SQLite-dialect SQL over psycopg.
+
+    Every ``conn.execute(...)`` call site below keeps its SQLite SQL
+    verbatim (the SQLite path is byte-identical); statements are translated
+    on the way to the wire. Commit/rollback/close delegate to the psycopg
+    connection — its context manager commits *and* closes, so the
+    ``with _connect(...) as conn:`` pattern neither leaks connections nor
+    loses writes on Postgres.
+    """
+
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    def execute(self, sql: str, params=None):
+        return self._conn.execute(_to_postgres(sql), params)
+
+    def executescript(self, script: str) -> None:
+        """sqlite3's ``executescript`` (psycopg has none): run statement by
+        statement. This module's DDL never embeds ``;`` inside a string
+        literal or comment, so a plain split is safe."""
+        for statement in script.split(";"):
+            lines = [line.strip() for line in statement.splitlines()]
+            if not any(line and not line.startswith("--") for line in lines):
+                continue  # empty or comment-only chunk
+            self.execute(statement.strip())
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return self._conn.__exit__(exc_type, exc_val, exc_tb)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+def _connect(db_path: Path | None = None) -> sqlite3.Connection | _PostgresConnection:
     if db_path is None:
         pg_url = _postgres_url()
         if pg_url:
-            return _psycopg_connect(pg_url)
+            return _PostgresConnection(_psycopg_connect(pg_url))
     path = Path(db_path) if db_path else ledger_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
@@ -195,13 +317,19 @@ def init_db(db_path: Path | None = None) -> None:
             );
             """
         )
+        if _is_postgres(conn):
+            # Plan 02 durable extras (jobs/dead_letters/audit_events/…),
+            # folded in from the old caller-less init_db_pg(). Runs after the
+            # main script so idempotency_keys/outbox_events keep their TEXT
+            # timestamps (the durable DDL's IF NOT EXISTS then skips them).
+            conn.executescript(_PG_DURABLE_DDL)
         try:
             conn.execute("ALTER TABLE loan_applications ADD COLUMN application_id TEXT")
-        except sqlite3.OperationalError:
+        except _schema_change_errors():
             pass
         try:
             conn.execute("ALTER TABLE loan_applications ADD COLUMN audit_trail TEXT")
-        except sqlite3.OperationalError:
+        except _schema_change_errors():
             pass
         for _ddl in (
             "ALTER TABLE loan_applications ADD COLUMN approver_id TEXT",
@@ -214,7 +342,7 @@ def init_db(db_path: Path | None = None) -> None:
         ):
             try:
                 conn.execute(_ddl)
-            except sqlite3.OperationalError:
+            except _schema_change_errors():
                 pass
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_disb_app_uid ON disbursements(application_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_applications_app_id ON loan_applications(application_id)")
@@ -280,20 +408,8 @@ CREATE INDEX IF NOT EXISTS idx_outbox_next_retry ON outbox_events (next_retry_at
     WHERE delivered_at IS NULL;
 """
 
-
-def init_db_pg() -> None:
-    """Create the shared durable tables on Neon (Plan 02). SQLite DDL in
-    init_db() is untouched; this runs only against postgres."""
-    pg_url = _postgres_url()
-    if not pg_url:
-        raise RuntimeError("DATABASE_URL must be a postgresql:// URL for init_db_pg")
-    conn = _psycopg_connect(pg_url)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(_PG_DURABLE_DDL)
-        conn.commit()
-    finally:
-        conn.close()
+# Postgres-only durable tables (Plan 02). Executed by init_db() when
+# DATABASE_URL is a postgres URL — never on SQLite (byte-identical schema).
 
 
 def find_idempotent_approval(
@@ -886,33 +1002,42 @@ def record_disbursement(
             return _to_row(row)
         contract_code = _next_contract_code(conn)
         digest = _ledger_hash(application_id, contract_code, loan_amount, disbursed_at)
-        try:
-            cur = conn.execute(
-                """
+        insert_sql = """
                 INSERT INTO disbursements
                     (application_id, contract_code, loan_amount, disbursed_at,
                      status, ledger_hash, idempotency_key)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    application_id,
-                    contract_code,
-                    float(loan_amount),
-                    disbursed_at,
-                    DISBURSEMENT_COMPLETED,
-                    digest,
-                    idempotency_key,
-                ),
-            )
-        except sqlite3.IntegrityError:
+                """
+        insert_params = (
+            application_id,
+            contract_code,
+            float(loan_amount),
+            disbursed_at,
+            DISBURSEMENT_COMPLETED,
+            digest,
+            idempotency_key,
+        )
+        if _is_postgres(conn):
+            # psycopg has no cursor.lastrowid — ask Postgres for the new id.
+            insert_sql += " RETURNING id"
+        try:
+            cur = conn.execute(insert_sql, insert_params)
+        except _integrity_errors():
             # Lost a concurrent race: the winner's row is the single truth.
+            if _is_postgres(conn):
+                # The error aborted the Postgres transaction — roll it back
+                # so the winner lookup below can execute.
+                conn.rollback()
             row = conn.execute(
                 "SELECT * FROM disbursements WHERE application_id = ?",
                 (application_id,),
             ).fetchone()
             return _to_row(row)
+        new_id = (
+            int(cur.fetchone()["id"]) if _is_postgres(conn) else int(cur.lastrowid)
+        )
         return {
-            "id": int(cur.lastrowid),
+            "id": new_id,
             "application_id": application_id,
             "contract_code": contract_code,
             "loan_amount": float(loan_amount),

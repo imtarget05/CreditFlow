@@ -78,6 +78,11 @@ _SHARED_BACKENDS = {
     "sqlite": ("langgraph.checkpoint.sqlite", "SqliteSaver", "sqlite"),
 }
 
+# Fallback holder for ``from_conn_string()`` context managers whose saver has
+# no ``__dict__`` (slots-based).  Keeping the context here keeps its database
+# connection open for the process lifetime; see ``_open_shared_saver``.
+_shared_saver_contexts: list[Any] = []
+
 # Pip-name to install when the operator wants the real shared backend.
 _SHARED_PACKAGES = {
     "langgraph.checkpoint.postgres": "langgraph-checkpoint-postgres",
@@ -143,6 +148,15 @@ def _open_shared_saver(url: str) -> Any:
     process start is the documented langgraph pattern.  Any failure — missing
     package, bad credentials, unreachable host — propagates to the caller,
     which decides between fallback and fail-closed.
+
+    ``langgraph-checkpoint-postgres`` (≥ 0.x on PyPI) defines
+    ``PostgresSaver.from_conn_string()`` as a ``@contextmanager`` that *yields*
+    the saver: calling it directly would return a context manager instead of a
+    ``BaseCheckpointSaver``, and letting ``__exit__`` run would close the very
+    connection the graph needs.  Savers that return themselves (older/fake
+    modules) are used as-is; context-manager forms are entered once and kept
+    open for the process lifetime — the connection then closes when the saver
+    itself is garbage-collected.
     """
     backend = _url_scheme(url)
     if backend not in _SHARED_BACKENDS:
@@ -151,7 +165,18 @@ def _open_shared_saver(url: str) -> Any:
         )
     module_name, class_name, _label = _SHARED_BACKENDS[backend]
     module = importlib.import_module(module_name)
-    saver = getattr(module, class_name).from_conn_string(url)
+    produced = getattr(module, class_name).from_conn_string(url)
+    if callable(getattr(produced, "setup", None)) or hasattr(produced, "put"):
+        saver = produced  # already a BaseCheckpointSaver
+    elif hasattr(produced, "__enter__"):
+        saver = produced.__enter__()
+        # Hold the context open: its __exit__ would close the connection.
+        try:
+            saver.__dict__["_from_conn_string_context"] = produced
+        except (AttributeError, TypeError):  # slots-based saver
+            _shared_saver_contexts.append(produced)
+    else:
+        saver = produced
     setup = getattr(saver, "setup", None)
     if callable(setup):
         setup()

@@ -1,15 +1,17 @@
 # CreditFlow — Render blueprint (full cloud mirror plane).
 #
 # Three-cloud architecture:
-#   - Frontend : Cloudflare Pages (creditflow.pages.dev, canonical)
+#   - Frontend : GitHub Pages (imtarget05.github.io/CreditFlow, canonical)
 #   - API      : Azure Container Apps (canonical, scale-to-zero)
-#   - API + DB : Render (this file — full mirror with managed Postgres)
+#   - API      : Render (this file — full mirror; DATABASE_URL points at Neon)
 #
 # The Render service `creditflow-api` is already linked to this repo in the
 # Render dashboard; pushing this file re-syncs it (autoDeploy: true).
 # DATABASE_URL switches both pipeline/storage/ledger.py (psycopg) and
-# pipeline/agent/checkpointer.py (PostgresSaver) onto the managed Postgres,
-# so ledger rows and paused HITL workflows survive restarts and replicas.
+# pipeline/agent/checkpointer.py (PostgresSaver) onto the external Neon
+# Postgres, so ledger rows and paused HITL workflows survive restarts and
+# replicas. Render does NOT provision a managed database for this blueprint —
+# the value is set once in the Render dashboard (sync: false, never committed).
 
 services:
   - type: web
@@ -29,11 +31,12 @@ services:
       # Comma allow-list consumed by backend/security.py:allowed_origins().
       # Cloudflare Pages is canonical; GitHub Pages kept during transition.
       - key: CREDITFLOW_CORS_ORIGINS
-        value: https://creditflow.pages.dev,https://imtarget05.github.io
+        value: https://imtarget05.github.io
+      # Neon Postgres connection string — set in the Render dashboard
+      # (sync: false, never committed). Without it the app falls back to the
+      # local SQLite ledger + file checkpointer (single-process only).
       - key: DATABASE_URL
-        fromDatabase:
-          name: creditflow-db
-          property: connectionString
+        sync: false
       # Optional Workers-AI LLM gateway — opt in from the dashboard:
       # set CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN (sync: false) and
       # flip CREDITFLOW_LLM_PROVIDER to `cloudflare`.
@@ -45,9 +48,3 @@ services:
         sync: false
       - key: CLOUDFLARE_MODEL
         sync: false
-
-databases:
-  - name: creditflow-db
-    databaseName: creditflow
-    user: creditflow
-    plan: free
