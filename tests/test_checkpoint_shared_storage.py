@@ -273,6 +273,11 @@ def test_shared_graph_endpoint_uses_the_shared_checkpointer(monkeypatch):
     monkeypatch.setattr(app_module, "_shared_graph", None)
     monkeypatch.setattr(app_module.app.state, "pipeline", None, raising=False)
     monkeypatch.setattr(app_module.app.state, "meta", {}, raising=False)
+    # Earlier graph-endpoint tests may leak a compiled checkpointer onto
+    # app.state; _build_shared_graph() reuses any non-None value, which would
+    # bypass the patched create_checkpointer() below. Clear it so the wiring
+    # proves it picks the object create_checkpointer() returns.
+    app_module.app.state.checkpointer = None
 
     try:
         app_module._build_shared_graph()

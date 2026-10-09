@@ -28,3 +28,9 @@ langchain-core==1.6.2
 
 # Durable staging: Neon Postgres branch of pipeline/storage/ledger.py.
 psycopg[binary]>=3.1.0
+
+# LangGraph shared checkpointer over Postgres (pipeline/agent/checkpointer.py
+# lazily imports this when DATABASE_URL points at postgres:// — used by the
+# Render-managed Postgres so paused workflows survive restarts/replicas).
+# 3.1.2 requires langgraph-checkpoint>=4.1,<5 — matches langgraph==1.2.11.
+langgraph-checkpoint-postgres==3.1.2

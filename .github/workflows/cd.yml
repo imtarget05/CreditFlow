@@ -95,14 +95,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy-frontend-pages:
-    name: Deploy frontend to GitHub Pages
+  deploy-frontend-cloudflare:
+    name: Deploy frontend to Cloudflare Pages
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     needs: [deploy-azure]
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -125,17 +122,12 @@ jobs:
         working-directory: frontend
         run: cp public/404.html dist/404.html
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v4
         with:
-          path: frontend/dist
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy frontend/dist --project-name creditflow --commit-dirty=true
 
   deploy-azure:
     name: Deploy backend to Azure Container Apps

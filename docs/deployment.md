@@ -3,18 +3,21 @@
 ## Architecture Overview
 
 ```
-GitHub Pages (frontend) ──→ Azure Container Apps (FastAPI backend) ──→ Cloudflare Workers AI (GenAI explain)
+Cloudflare Pages (frontend) ──→ Azure Container Apps (FastAPI backend, canonical) ──→ Cloudflare Workers AI (GenAI explain)
+        │                                        ▲
+        │                                        └── mirror: Render (render.yaml: API + managed Postgres)
 (+ GHCR Docker images: api + web, auto-push từ cd.yml)
 ```
 
 | Component | Platform | URL |
 |-----------|----------|-----|
-| Frontend (React/Vite SPA) | GitHub Pages | `https://imtarget05.github.io/CreditFlow/` |
+| Frontend (React/Vite SPA) | Cloudflare Pages | `https://creditflow.pages.dev/` |
 | Backend (FastAPI + model) | Azure Container Apps | `https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io` |
-| LLM explanations | Cloudflare Workers AI | REST API (called by backend, NOT Pages) |
+| Backend mirror + Postgres | Render | `https://creditflow-api-9z1v.onrender.com` |
+| LLM explanations | Cloudflare Workers AI | REST API (called by backend, NOT frontend) |
 | Docker images | GHCR | `ghcr.io/<owner>/creditflow/creditflow-{api,web}` |
 
-> Lịch sử: Cloudflare Pages cũ `creditflow-4nu.pages.dev` đã decommission (trả 403) — không còn trong stack, chỉ giữ 1 dòng này làm tham chiếu.
+> Lịch sử: GH Pages `imtarget05.github.io/CreditFlow` đã thay bằng Cloudflare Pages `creditflow.pages.dev`; CF Pages cũ `creditflow-4nu.pages.dev` đã decommission (403) — chỉ giữ tham chiếu.
 
 ## Step 1: Deploy Backend to Azure Container Apps
 
@@ -42,25 +45,24 @@ curl https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapp
 # {"model_version":"...","model_name":"..."}
 ```
 
-## Step 2: Deploy Frontend to GitHub Pages
+## Step 2: Deploy Frontend to Cloudflare Pages
 
-1. Repo **Settings → Pages → Source: GitHub Actions**.
-2. Push `main` → workflow `.github/workflows/cd.yml` job `deploy-frontend-pages`:
+1. Repo Secrets: `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` (đã set cho `cd.yml`).
+2. Push `main` → workflow `.github/workflows/cd.yml` job `deploy-frontend-cloudflare`:
    - `npm ci` + `npm run build` (trong `frontend/`)
-   - Upload `frontend/dist` via `actions/upload-pages-artifact@v3`
-   - Deploy via `actions/deploy-pages@v4` (branch `gh-pages`)
-3. `frontend/vite.config.js` giữ `base: '/CreditFlow/'` để routing/assets đúng sub-path.
+   - `cloudflare/wrangler-action@v4` → `pages deploy frontend/dist --project-name creditflow`
+3. `frontend/vite.config.js` dùng `base: process.env.VITE_BASE || "./"` — base tương đối, hoạt động ở root của Pages (không cần sub-path `/CreditFlow/`).
 4. The workflow bakes the canonical Azure Container Apps URL into `VITE_API_BASE`.
-5. SPA fallback: `frontend/public/404.html` (redirect mọi deep path lạ về `/CreditFlow/`) đã commit — xử lý unknown-path refresh trên GitHub Pages. Lưu ý: GitHub Pages trả HTTP 404 kèm nội dung trang redirect (browser chạy JS sẽ chuyển về app). `_redirects` chỉ là di sản Cloudflare Pages, không có tác dụng trên GitHub Pages — giữ lại để tham chiếu, không dùng cho fallback.
+5. SPA fallback: `frontend/public/_redirects` (`/* /index.html 200`) được Vite copy vào `dist/` — Cloudflare Pages tự serve index cho mọi deep path; `404.html` vẫn được copy kèm làm backup.
 
 ### Verify Frontend
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" https://imtarget05.github.io/CreditFlow/
+curl -s -o /dev/null -w "%{http_code}\n" https://creditflow.pages.dev/
 # 200
 ```
 
-Open `https://imtarget05.github.io/CreditFlow/` in a browser and test the Predict / Model / Monitoring tabs.
+Open `https://creditflow.pages.dev/` in a browser and test the Predict / Model / Monitoring tabs.
 Predict E2E qua Azure backend trả 200 với ideal-profile payload.
 
 ## Step 3: Cloudflare Workers AI (GenAI Explain Layer)
@@ -87,6 +89,31 @@ curl https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapp
 
 If `configured` is `false`, check the Azure Container Apps configuration.
 
+## Step 4: Render Mirror (API + Managed Postgres)
+
+`render.yaml` khai báo mirror plane đầy đủ bên cạnh Azure (canonical):
+
+1. Service web `creditflow-api` — Docker build từ `backend/Dockerfile` (context repo root),
+   `healthCheckPath: /health/live`, `autoDeploy: true` (push `main` là redeploy).
+2. Managed Postgres `creditflow-db` — `DATABASE_URL` được wire tự động
+   (`fromDatabase: connectionString`):
+   - `pipeline/storage/ledger.py` → psycopg (ledger rows bền qua restart),
+   - `pipeline/agent/checkpointer.py` → `langgraph-checkpoint-postgres` (PostgresSaver —
+     paused HITL workflows sống sót qua restart/replica).
+3. `CREDITFLOW_API_KEY` dùng `generateValue: true` (instance tự chứa, khác secret ACA —
+   smoke script nhắm ACA là canonical).
+4. LLM gateway Workers-AI là opt-in: set `CLOUDFLARE_*` + `CREDITFLOW_LLM_PROVIDER=cloudflare`
+   trong dashboard Render (các key này để `sync: false`, không nằm trong repo).
+
+### Verify Render
+
+```bash
+curl https://creditflow-api-9z1v.onrender.com/health/live
+# {"status":"ok", ...}
+```
+
+Service đã linked sẵn với repo trong Render dashboard (blueprint sync trên mỗi push).
+
 ## Environment Variables Reference
 
 ### Azure Container Apps (Backend)
@@ -94,10 +121,10 @@ If `configured` is `false`, check the Azure Container Apps configuration.
 | Variable | Required | Default | Notes |
 |----------|----------|---------|-------|
 | `CREDITFLOW_API_KEY` | Yes | — | Stored as ACA secret `creditflow-api-key`; container references it using `secretref:creditflow-api-key`. |
-| `CREDITFLOW_CORS_ORIGINS` | Yes | `https://imtarget05.github.io` | Explicit Pages origin allow-list. |
+| `CREDITFLOW_CORS_ORIGINS` | Yes | `https://creditflow.pages.dev,https://imtarget05.github.io` | Explicit comma-separated origin allow-list (set by `deploy-azure.sh`; GitHub Pages kept during transition). |
 | `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` | For GenAI | — | **Never commit** — passed to ACA secret references by the Azure deploy workflow. |
 
-### GitHub Pages (Frontend)
+### Cloudflare Pages (Frontend)
 
 | Variable | Required | Default | Notes |
 |----------|----------|---------|-------|

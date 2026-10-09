@@ -32,6 +32,17 @@ from tests.auth_support import AUTH_HEADERS, configure_auth_env
 _stack = ExitStack()
 client = _stack.enter_context(TestClient(app))
 
+
+@pytest.fixture(autouse=True)
+def _reset_shared_graph_state():
+    """Graph-endpoint tests build the shared graph inside app.state; drop it
+    after each test so later files (test_checkpoint_shared_storage) start
+    from a clean slate instead of inheriting this file's FileCheckpointSaver."""
+    yield
+    from backend.app import _reset_shared_graph
+
+    _reset_shared_graph()
+
 # Profiles follow the API/UI money-unit contract: VND (đồng).
 # Training-scale numbers (e.g. income=2500) are rejected by
 # pipeline/validation/schemas.py:validate_money_unit_contract — every money

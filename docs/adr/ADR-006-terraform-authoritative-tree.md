@@ -17,7 +17,7 @@ Hai cây cùng sửa một resource group là drift thật: sửa một cây, c�
 1. `infra/terraform/` là Terraform IaC duy nhất có thẩm quyền (authoritative). Mọi thay đổi Terraform đi vào đây.
 2. `deploy/terraform/` đã bị thay thế (superseded) và bị xoá trong commit `chore(infra): remove superseded terraform deployment tree`.
 3. `deploy/scripts/deploy-azure.sh` GIỮ NGUYÊN — đây là deployment automation (Azure CLI), được `.github/workflows/deploy-azure.yml` gọi trực tiếp; nó không thuộc phạm vi Terraform và không bị ảnh hưởng.
-4. **Không tuyên bố hạ tầng Terraform/Azure là "live" hay "deployed" trừ khi có runtime evidence** (state thật, endpoint trả lời, hoặc run deploy đã ghi nhận). Trạng thái hiện tại của ADR này: Terraform = capability / infrastructure-as-code evidence. Framing canonical: PRIVATE/ON-PREM là deployment architecture chính; Render + GitHub Pages là demo plane; Azure là capability cho tới khi có evidence.
+4. **Không tuyên bố hạ tầng Terraform/Azure là "live" hay "deployed" trừ khi có runtime evidence** (state thật, endpoint trả lời, hoặc run deploy đã ghi nhận). Framing canonical: PRIVATE/ON-PREM là deployment architecture chính; demo plane = Azure Container Apps (live evidence 2026-10-07, `/health/live` 200) + Cloudflare Pages (`creditflow.pages.dev`) + Render mirror (`render.yaml`, API + Postgres). Terraform = capability / infrastructure-as-code evidence (đã superseded, xoá).
 
 ## Consequences
 ### Positive

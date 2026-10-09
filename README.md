@@ -18,8 +18,9 @@ Designed with enterprise requirements in mind, it features tamper-evident audit 
 
 | Component | URL | State |
 |---|---|---|
-| Frontend (GitHub Pages) | https://imtarget05.github.io/CreditFlow/ | Deployed by `cd.yml` (`actions/deploy-pages`) |
+| Frontend (Cloudflare Pages) | https://creditflow.pages.dev/ | Deployed by `cd.yml` (`cloudflare/wrangler-action`, project `creditflow`) |
 | API (Azure Container Apps) | https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io | `creditflow-api` container app, scale 0-1, /health/live + /health/ready + /model/info verified 2026-10-07 |
+| API + Postgres (Render) | https://creditflow-api-9z1v.onrender.com | Mirror plane from `render.yaml` (Docker web + managed Postgres), autoDeploy on push |
 
 Owner actions (dashboards — pipeline code is ready):
 
@@ -32,7 +33,7 @@ Owner actions (dashboards — pipeline code is ready):
 - Keep the Azure app's existing `CREDITFLOW_ENV` mode unchanged during this
   alignment; production mode intentionally disables simulated CIC/bank gateways
   and requires a separate real-gateway readiness decision.
-- The GitHub Pages app can score applications, but ledger reads and human approval
+- The Cloudflare Pages app can score applications, but ledger reads and human approval
   remain locked until a user-authenticated server-side flow is implemented. Do not
   put a shared key in this static frontend.
 
@@ -120,7 +121,7 @@ graph TD
 | **Workflow & GenAI** | LangGraph, LangChain, Cloudflare Workers AI (Llama 3.2-1b) |
 | **Frontend** | React 18, Vite, Vanilla CSS |
 | **Storage & Ledger** | SQLite (with SHA-256 tamper-evident hashing) |
-| **DevOps** | Docker, Docker Compose, GitHub Actions, Azure Container Apps, GitHub Pages |
+| **DevOps** | Docker, Docker Compose, GitHub Actions, Azure Container Apps, Cloudflare Pages, Render |
 
 ---
 
@@ -301,7 +302,8 @@ The system was trained on a **5,000-row synthetic proxy dataset** (seed `42`, ~1
 - **Processing**: Rule Filter DTI/LTI + TF-IDF cosine inference (local, offline-safe).
 - **Policy Guard cứng** (`pipeline/agent/explanations.py:is_public_cloud`): `CONFIDENTIAL` tuyệt đối chặn gửi ra public cloud (OpenAI/Groq/Cloudflare/Anthropic/Google) → route về Private vLLM (`ollama`/`local_vllm`) hoặc deterministic template fallback. Public cloud chỉ dùng cho data PUBLIC hoặc tắt hẳn.
 - **Compliance**: Banking Secrecy / GDPR / SBV — CONFIDENTIAL never leaks. Xem `docs/DEPLOYMENT_PRIVATE_ONPREM.md`.
-- **Planes**: Azure Container Apps + GitHub Pages = **portfolio demo plane**;
+- **Planes**: Azure Container Apps (canonical API) + Cloudflare Pages (frontend) +
+  Render (API + Postgres mirror) = **portfolio demo plane**;
   enterprise deployment target = **PRIVATE ON-PREM** như trên. Public cloud env
   chỉ dành cho data PUBLIC.
 

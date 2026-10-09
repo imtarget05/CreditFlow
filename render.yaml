@@ -1,2 +1,53 @@
-# CreditFlow's canonical production backend is Azure Container Apps.
-# This formerly defined a Render preview service and is intentionally empty.
+# CreditFlow — Render blueprint (full cloud mirror plane).
+#
+# Three-cloud architecture:
+#   - Frontend : Cloudflare Pages (creditflow.pages.dev, canonical)
+#   - API      : Azure Container Apps (canonical, scale-to-zero)
+#   - API + DB : Render (this file — full mirror with managed Postgres)
+#
+# The Render service `creditflow-api` is already linked to this repo in the
+# Render dashboard; pushing this file re-syncs it (autoDeploy: true).
+# DATABASE_URL switches both pipeline/storage/ledger.py (psycopg) and
+# pipeline/agent/checkpointer.py (PostgresSaver) onto the managed Postgres,
+# so ledger rows and paused HITL workflows survive restarts and replicas.
+
+services:
+  - type: web
+    name: creditflow-api
+    runtime: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/live
+    autoDeploy: true
+    envVars:
+      # Render injects PORT at runtime; backend/Dockerfile CMD honors ${PORT}.
+      - key: CREDITFLOW_ENV
+        value: production
+      # Self-contained instance secret (dashboard-visible, unique per service).
+      - key: CREDITFLOW_API_KEY
+        generateValue: true
+      # Comma allow-list consumed by backend/security.py:allowed_origins().
+      # Cloudflare Pages is canonical; GitHub Pages kept during transition.
+      - key: CREDITFLOW_CORS_ORIGINS
+        value: https://creditflow.pages.dev,https://imtarget05.github.io
+      - key: DATABASE_URL
+        fromDatabase:
+          name: creditflow-db
+          property: connectionString
+      # Optional Workers-AI LLM gateway — opt in from the dashboard:
+      # set CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN (sync: false) and
+      # flip CREDITFLOW_LLM_PROVIDER to `cloudflare`.
+      - key: CREDITFLOW_LLM_PROVIDER
+        sync: false
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: CLOUDFLARE_MODEL
+        sync: false
+
+databases:
+  - name: creditflow-db
+    databaseName: creditflow
+    user: creditflow
+    plan: free
