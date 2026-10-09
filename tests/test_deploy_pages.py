@@ -67,7 +67,10 @@ def test_pages_workflow_uses_azure_as_the_canonical_backend():
 def test_creditflow_docs_and_production_checks_only_use_azure_backend():
     docs = (ROOT / "README.md").read_text(encoding="utf-8")
     smoke = (ROOT / "scripts/smoke_production.py").read_text(encoding="utf-8")
-    assert "creditflow-api-9z1v.onrender.com" not in docs
+    # The retired legacy Render service (creditflow-api-ko2h) must never
+    # reappear; the mirror plane documented in `render.yaml`
+    # (creditflow-api-9z1v.onrender.com) is separate and allowed in the docs.
+    assert "creditflow-api-ko2h.onrender.com" not in docs
     assert "creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io" in smoke
 
 
@@ -159,7 +162,13 @@ def test_azure_deployment_requires_key_and_never_places_it_in_pages_build():
     assert 'if [ -z "$API_KEY" ]; then' in deploy_script
     assert "CREDITFLOW_API_KEY: ${{ secrets.CREDITFLOW_API_KEY }}" in deploy_workflow
     assert "CREDITFLOW_API_KEY" not in pages_workflow
-    assert "CREDITFLOW_API_KEY" not in (ROOT / "render.yaml").read_text(encoding="utf-8")
+    # render.yaml may provision the mirror instance key ONLY via Render's
+    # generateValue (dashboard-managed, never checked in); a literal value
+    # would commit the shared secret to the repo.
+    _render_yaml = (ROOT / "render.yaml").read_text(encoding="utf-8")
+    assert "generateValue: true" in _render_yaml
+    _key_block = _render_yaml.split("CREDITFLOW_API_KEY", 1)[-1].split("- key:", 1)[0]
+    assert "value:" not in _key_block
 
 
 def test_pages_redirects_file_exists_for_spa_routing():
@@ -230,5 +239,7 @@ def test_deployment_documents_azure_and_github_pages():
     assert "Azure Container Apps" in content, "deployment.md must document the canonical Azure backend"
     assert AZURE_BASE in content
     assert "GitHub Pages" in content, "deployment.md must mention GitHub Pages"
-    assert "creditflow-api-9z1v.onrender.com" not in content
-    assert "Render" not in content
+    # The mirror plane (render.yaml / creditflow-api-9z1v) is documented on
+    # purpose; only the retired legacy Render service is banned here.
+    assert "creditflow-api-ko2h.onrender.com" not in content
+    assert "Render" in content, "deployment.md must document the Render mirror plane"
