@@ -57,29 +57,31 @@ import secrets
 from dataclasses import dataclass
 
 from fastapi import HTTPException, Security
-from fastapi.security import APIKeyHeader
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
+import base64
+import hashlib
+import hmac
+import json
+import time
 
 API_KEY_HEADER_NAME = "X-CreditFlow-API-Key"
 API_KEY_ENV = "CREDITFLOW_API_KEY"
 API_KEY_ID_ENV = "CREDITFLOW_API_KEY_ID"
 API_KEY_ROLE_ENV = "CREDITFLOW_API_KEY_ROLE"
+JWT_SECRET_ENV = "CREDITFLOW_JWT_SECRET"
 ENV_ENV = "CREDITFLOW_ENV"
 CORS_ORIGINS_ENV = "CREDITFLOW_CORS_ORIGINS"
 
 DEFAULT_APPROVER_ID = "supervisor_on_duty"
-# Least privilege that can still approve a workflow paused at human_approval
-# (a level-0 STP decision is auto-approved and never reaches this endpoint).
 DEFAULT_APPROVER_ROLE = "UNDERWRITER_L1"
+DEFAULT_JWT_SECRET = "creditflow-secret-key-for-jwt-tokens-2026-production"
+
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:5173",  # vite dev server (frontend/vite.config.js:8)
     "http://localhost:8080",  # docker compose web (nginx -> api)
     "https://imtarget05.github.io",  # GitHub Pages production frontend
 )
 
-# Seniority of the credit approval authority matrix that the workflow already
-# computes (``determine_authority_level``).  Reusing that vocabulary keeps
-# authorisation aligned with the business rule instead of adding a second,
-# parallel role system that nothing else in the codebase knows about.
 AUTHORITY_RANK = {
     "SYSTEM_STP": 0,
     "UNDERWRITER_L1": 1,
@@ -87,9 +89,82 @@ AUTHORITY_RANK = {
 }
 HIGHEST_AUTHORITY = "RISK_COMMITTEE_L2"
 
-api_key_header = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=False)
-_MISSING_CREDENTIALS = {"WWW-Authenticate": "ApiKey"}
+# In-memory user directory with hashed passwords
+def _hash_pw(pw: str) -> str:
+    return hashlib.sha256(pw.encode()).hexdigest()
 
+USERS_DB = {
+    "underwriter1": {
+        "password_hash": _hash_pw("Underwriter@123"),
+        "role": "UNDERWRITER_L1",
+        "name": "Underwriter L1",
+    },
+    "risk_lead": {
+        "password_hash": _hash_pw("RiskLead@123"),
+        "role": "RISK_COMMITTEE_L2",
+        "name": "Risk Committee Lead L2",
+    },
+}
+
+def jwt_secret() -> str:
+    return os.environ.get(JWT_SECRET_ENV, "").strip() or DEFAULT_JWT_SECRET
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+def _b64url_decode(s: str) -> bytes:
+    padding = 4 - (len(s) % 4)
+    if padding != 4:
+        s += "=" * padding
+    return base64.urlsafe_b64decode(s.encode())
+
+def create_access_token(identity: str, role: str, expires_in: int = 86400) -> str:
+    """Create a signed JWT token with identity and authority role."""
+    header = {"alg": "HS256", "typ": "JWT"}
+    payload = {
+        "sub": identity,
+        "role": role,
+        "exp": int(time.time()) + expires_in,
+        "iat": int(time.time()),
+    }
+    encoded_header = _b64url_encode(json.dumps(header).encode())
+    encoded_payload = _b64url_encode(json.dumps(payload).encode())
+    msg = f"{encoded_header}.{encoded_payload}".encode()
+    signature = hmac.new(jwt_secret().encode(), msg, hashlib.sha256).digest()
+    encoded_sig = _b64url_encode(signature)
+    return f"{encoded_header}.{encoded_payload}.{encoded_sig}"
+
+def decode_access_token(token: str) -> dict | None:
+    """Verify and decode a signed JWT token."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    encoded_header, encoded_payload, encoded_sig = parts
+    msg = f"{encoded_header}.{encoded_payload}".encode()
+    expected_sig = hmac.new(jwt_secret().encode(), msg, hashlib.sha256).digest()
+    try:
+        sig = _b64url_decode(encoded_sig)
+        if not secrets.compare_digest(sig, expected_sig):
+            return None
+        payload = json.loads(_b64url_decode(encoded_payload).decode())
+        if payload.get("exp", 0) < time.time():
+            return None
+        return payload
+    except Exception:
+        return None
+
+def authenticate_user(username: str, password: str) -> dict | None:
+    """Authenticate credentials against user directory."""
+    user = USERS_DB.get(username)
+    if not user:
+        return None
+    if not secrets.compare_digest(user["password_hash"], _hash_pw(password)):
+        return None
+    return {"username": username, "role": user["role"], "name": user["name"]}
+
+api_key_header = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=False)
+bearer_scheme = HTTPBearer(auto_error=False)
+_MISSING_CREDENTIALS = {"WWW-Authenticate": "ApiKey, Bearer"}
 
 @dataclass(frozen=True)
 class Principal:
@@ -100,7 +175,7 @@ class Principal:
 
     @property
     def level(self) -> int:
-        return AUTHORITY_RANK[self.role]
+        return AUTHORITY_RANK.get(self.role, 0)
 
 
 def is_production() -> bool:
@@ -156,8 +231,24 @@ def allowed_origins() -> list[str]:
     return origins
 
 
-def require_principal(api_key: str | None = Security(api_key_header)) -> Principal:
-    """Authenticate the shared secret.  401 on absent, wrong or unconfigured."""
+def require_principal(
+    api_key: str | None = Security(api_key_header),
+    bearer_creds: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+) -> Principal:
+    """Authenticate via JWT Bearer token or shared API key secret."""
+    # 1. First priority: Check JWT Bearer token if provided
+    token_str = getattr(bearer_creds, "credentials", None)
+    if token_str:
+        payload = decode_access_token(token_str)
+        if payload and "sub" in payload and "role" in payload:
+            return Principal(identity=payload["sub"], role=payload["role"])
+        raise HTTPException(
+            status_code=401,
+            detail="INVALID_BEARER_TOKEN: token is invalid or expired.",
+            headers=_MISSING_CREDENTIALS,
+        )
+
+    # 2. Second priority: Fall back to shared API Key
     expected = configured_api_key()
     if not expected:
         # Fail closed: no configured secret means nobody can authenticate.
@@ -169,7 +260,7 @@ def require_principal(api_key: str | None = Security(api_key_header)) -> Princip
     if not api_key or not secrets.compare_digest(api_key.encode(), expected.encode()):
         raise HTTPException(
             status_code=401,
-            detail=f"INVALID_API_KEY: supply {API_KEY_HEADER_NAME}.",
+            detail=f"INVALID_API_KEY: supply valid {API_KEY_HEADER_NAME} or Authorization Bearer token.",
             headers=_MISSING_CREDENTIALS,
         )
     return Principal(identity=configured_approver_id(), role=configured_approver_role())

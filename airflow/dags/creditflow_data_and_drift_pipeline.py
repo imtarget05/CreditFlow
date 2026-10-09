@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -22,6 +22,57 @@ CREDITFLOW_API_URL = os.environ.get(
     "CREDITFLOW_API_URL",
     "https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io",
 ).rstrip("/")
+
+
+CREDITFLOW_API_KEY = os.environ.get("CREDITFLOW_API_KEY", "").strip()
+STALE_THRESHOLD_DAYS = 7
+
+
+def _validate_app(app: dict) -> dict | None:
+    """Validate a single application record against the canonical schema."""
+    required = (
+        "id", "income", "loan_amount", "credit_score",
+        "debt_to_income", "loan_term_months",
+    )
+    if not all(app.get(k) is not None for k in required):
+        return None
+    return app
+
+
+def _is_fresh(app: dict) -> bool:
+    """Reject applications older than STALE_THRESHOLD_DAYS."""
+    created_at = app.get("created_at") or app.get("application_date", "")
+    if not created_at:
+        return False
+    try:
+        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        age = datetime.now(tz=timezone.utc) - created
+        return age.days <= STALE_THRESHOLD_DAYS
+    except (ValueError, TypeError):
+        return False
+
+
+def _fetch_applications() -> list[dict]:
+    """Fetch loan applications from the CreditFlow API with auth and stale-data filtering."""
+    if not CREDITFLOW_API_KEY:
+        raise RuntimeError(
+            "CREDITFLOW_API_KEY is not configured — cannot authenticate to CreditFlow API."
+        )
+    req = urllib.request.Request(
+        f"{CREDITFLOW_API_URL}/applications",
+        headers={
+            "User-Agent": "Airflow-ETL/1.0",
+            "X-CreditFlow-API-Key": CREDITFLOW_API_KEY,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    raw_apps = data.get("applications", []) if isinstance(data, dict) else []
+    valid_apps = [_validate_app(a) for a in raw_apps if _is_fresh(a)]
+    return [a for a in valid_apps if a is not None]
+
+
+ingest_and_validate = _fetch_applications  # module-level alias for testability
 
 
 def _calculate_psi(reference: list[float], current: list[float], bins: int = 10) -> float:
@@ -66,43 +117,7 @@ def creditflow_data_and_drift_pipeline() -> None:
     @task
     def ingest_and_validate() -> list[dict]:
         """Ingest applicant records and ensure compliance with canonical schema."""
-        req = urllib.request.Request(
-            f"{CREDITFLOW_API_URL}/health",
-            headers={"User-Agent": "Airflow-ETL/2.0"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                health = json.loads(resp.read().decode("utf-8"))
-        except Exception:
-            health = {"status": "degraded"}
-
-        sample_batch = [
-            {
-                "id": "app_batch_001",
-                "income": 85000000,
-                "credit_score": 720,
-                "debt_to_income": 0.28,
-                "loan_amount": 250000000,
-                "loan_term_months": 36,
-            },
-            {
-                "id": "app_batch_002",
-                "income": 45000000,
-                "credit_score": 640,
-                "debt_to_income": 0.42,
-                "loan_amount": 120000000,
-                "loan_term_months": 24,
-            },
-            {
-                "id": "app_batch_003",
-                "income": 110000000,
-                "credit_score": 790,
-                "debt_to_income": 0.18,
-                "loan_amount": 500000000,
-                "loan_term_months": 48,
-            },
-        ]
-        return sample_batch
+        return _fetch_applications()
 
     @task
     def compute_drift_metrics(applicants: list[dict]) -> dict:
@@ -168,4 +183,5 @@ def creditflow_data_and_drift_pipeline() -> None:
     emit_audit_summary(drift, scores)
 
 
-creditflow_data_and_drift_pipeline()
+if not os.environ.get("CREDITFLOW_DAG_NO_INSTANTIATE", ""):
+    creditflow_data_and_drift_pipeline()

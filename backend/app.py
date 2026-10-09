@@ -34,6 +34,8 @@ from pydantic import BaseModel, Field, field_validator
 from backend.security import (
     Principal,
     allowed_origins,
+    authenticate_user,
+    create_access_token,
     ensure_authority,
     require_configured_key,
     require_principal,
@@ -455,6 +457,28 @@ def metrics_prometheus():
         f"creditflow_uptime_seconds {snap['uptime_seconds']}",
     ]
     return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/auth/login")
+def login(req: LoginRequest):
+    """Authenticate underwriter credentials and issue a signed JWT token."""
+    user = authenticate_user(req.username, req.password)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="INVALID_CREDENTIALS: check username or password.",
+        )
+    token = create_access_token(user["username"], user["role"])
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": user,
+    }
 
 
 # ---------------------------------------------------------------------------
