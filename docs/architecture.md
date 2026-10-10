@@ -41,7 +41,7 @@ audit được — LLM giải thích, không quyết định."*
 
 | Service | Tech | Cổng | Chạy ở đâu | Health / chú thích |
 |---|---|---|---|---|
-| `web` (SPA) | React 18 + Vite (nginx trong compose) | 80 (compose) | **Prod: Cloudflare Pages** `https://creditflow.pages.dev/`; local: nginx serve `dist/` + proxy `/api` | deploy bởi `cd.yml` → `cloudflare/wrangler-action` (pages deploy) |
+| `web` (SPA) | React 18 + Vite (nginx trong compose) | 80 (compose) | **Prod: GitHub Pages** `https://imtarget05.github.io/CreditFlow/`; local: nginx serve `dist/` + proxy `/api` | deploy bởi `cd.yml` → `actions/deploy-pages` sau CI và Azure gate |
 | `api` | FastAPI, Python 3.12 | **8080** trong container (compose map `8081→8080`) | local: Docker; **Prod: Azure Container Apps** `creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io` (scale 0–1) | `/health`, `/health/live`, `/health/ready` (readiness = `status=ready`), `/model/info` |
 | `llm-gateway` | FastAPI proxy OpenAI-compatible | **8787** | máy LAN (bind loopback) → upstream LM Studio `192.168.1.8:1234` + Ollama fallback | `/health`, `/health/ready`, `/metrics`, `/admin/stats`; client trỏ `base_url=localhost:8787/v1`, header `X-Project` phân loại telemetry |
 | `mlflow` (compose profile `mlflow`) | MLflow tracking | 5050 | local-only, không public | `MLFLOW_TRACKING_URI=http://localhost:5050` |
@@ -52,7 +52,7 @@ audit được — LLM giải thích, không quyết định."*
 
 ```mermaid
 flowchart LR
-    U["Browser · Cloudflare Pages<br/>creditflow.pages.dev"] -->|"POST /api/applications<br/>(X-CreditFlow-API-Key, server-side)"| ACA["Azure Container Apps<br/>creditflow-api :8080<br/>/health/live · /health/ready · /model/info"]
+    U["Browser · GitHub Pages<br/>imtarget05.github.io/CreditFlow"] -->|"POST /api/applications"| ACA["Azure Container Apps<br/>creditflow-api :8080<br/>/health/live · /health/ready · /model/info"]
     ACA -.mirror.-> R["Render (render.yaml)<br/>creditflow-api + Postgres<br/>autoDeploy on push"]
     ACA --> LED[("Ledger<br/>pipeline/storage/ledger.py<br/>HDTD contract · SHA-256 snapshot")]
     ACA --> MOD["Model bundle<br/>logistic_regression_v001<br/>SHA256SUMS gate at load"]
@@ -70,7 +70,7 @@ secret (`secretref` trong `deploy/scripts/deploy-azure.sh`), chỉ dùng server-
 
 | Dimension | `PROFILE=portfolio` (Demo) | `PROFILE=production` (Azure enterprise — mục tiêu) |
 |---|---|---|
-| Primary Cloud | Cloudflare Pages (frontend) + Azure Container Apps (API) + Render mirror ($0) | Azure Container Apps (`min_replicas=0`, scale-to-zero) |
+| Primary Cloud | GitHub Pages (frontend) + Azure Container Apps (API) + Render mirror ($0) | Azure Container Apps (`min_replicas=0`, scale-to-zero) |
 | Document Storage | Local filesystem / Cloudflare R2 | Azure Blob (`credit-documents`, SSE AES-256) |
 | Model Registry | Local weights + MLflow self-hosted (5050) | Azure Blob (`ml-models`) + MLflow Tracking |
 | Database | SQLite WAL (default) | Azure Database for PostgreSQL Flexible Server |
@@ -123,7 +123,7 @@ flowchart LR
 
 ```mermaid
 sequenceDiagram
-    participant U as Frontend (Cloudflare Pages)
+    participant U as Frontend (GitHub Pages)
     participant A as FastAPI (Azure Container Apps)
     participant M as Model bundle (SHA256 gate)
     participant G as LangGraph 12-node

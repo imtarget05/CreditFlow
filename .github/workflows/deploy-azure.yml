@@ -3,6 +3,10 @@ name: Deploy to Azure Container Apps
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      source_sha:
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -27,6 +31,8 @@ jobs:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -76,6 +82,16 @@ jobs:
           fi
           chmod +x deploy/scripts/deploy-azure.sh
           ./deploy/scripts/deploy-azure.sh
+
+      - name: Require production runtime mode
+        if: env.AZURE_CREDENTIALS != ''
+        run: |
+          MODE=$(az containerapp show --name creditflow-api --resource-group rg-portfolio-prod \
+            --query "properties.template.containers[0].env[?name=='CREDITFLOW_ENV'].value | [0]" -o tsv)
+          if [ "$MODE" != "production" ]; then
+            echo "::error::Azure CREDITFLOW_ENV is not production; readiness cannot certify the production gateway." >&2
+            exit 1
+          fi
 
       - name: Azure production readiness and API smoke
         if: env.AZURE_CREDENTIALS != ''

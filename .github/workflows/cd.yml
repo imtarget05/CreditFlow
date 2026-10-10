@@ -1,8 +1,10 @@
 name: CD
 
 on:
-  push:
-    branches: [main, master]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
@@ -11,7 +13,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: cd-${{ github.workflow }}-${{ github.ref }}
+  group: cd-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: true
 
 env:
@@ -24,9 +26,11 @@ jobs:
   build-api-image:
     name: Docker — build + push creditflow-api to GHCR
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -44,8 +48,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_API }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=sha,prefix=,format=short
+            type=raw,value=latest
+            type=raw,value=${{ github.event.workflow_run.head_sha }}
 
       - name: Build + push API image
         uses: docker/build-push-action@v5
@@ -61,9 +65,11 @@ jobs:
   build-web-image:
     name: Docker — build + push creditflow-web to GHCR
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -81,8 +87,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_WEB }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=sha,prefix=,format=short
+            type=raw,value=latest
+            type=raw,value=${{ github.event.workflow_run.head_sha }}
 
       - name: Build + push Web image
         uses: docker/build-push-action@v5
@@ -95,13 +101,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy-frontend-cloudflare:
-    name: Deploy frontend to Cloudflare Pages
+  deploy-frontend-pages:
+    name: Deploy frontend to GitHub Pages
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.event.workflow_run.conclusion == 'success'
     needs: [deploy-azure]
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -122,15 +133,58 @@ jobs:
         working-directory: frontend
         run: cp public/404.html dist/404.html
 
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v4
+      - name: Stamp source revision
+        env:
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          Path('frontend/dist/release.json').write_text(
+              json.dumps({'source_sha': os.environ['SOURCE_SHA']}) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy frontend/dist --project-name creditflow --commit-dirty=true
+          path: frontend/dist
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+      - name: Verify deployed frontend identity
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.request
+
+          url = os.environ['PAGE_URL'].rstrip('/') + '/'
+          for attempt in range(10):
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  html = response.read().decode('utf-8', 'replace')
+              with urllib.request.urlopen(url + 'release.json', timeout=30) as response:
+                  release = json.load(response)
+              if (release.get('source_sha') == os.environ['SOURCE_SHA']
+                      and 'CreditFlow — Sổ chấm rủi ro khoản vay' in html):
+                  print(f'CreditFlow {os.environ["SOURCE_SHA"]} verified at {url}')
+                  break
+              if attempt == 9:
+                  raise SystemExit(f'Unexpected or stale frontend at {url}')
+              time.sleep(10)
+          PY
 
   deploy-azure:
     name: Deploy backend to Azure Container Apps
-    if: github.ref == 'refs/heads/main'
+    if: github.event.workflow_run.conclusion == 'success'
     uses: ./.github/workflows/deploy-azure.yml
+    with:
+      source_sha: ${{ github.event.workflow_run.head_sha }}
     secrets: inherit

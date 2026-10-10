@@ -247,19 +247,73 @@ def create_checkpointer(path: str | Path | None = None) -> tuple[Any, str]:
 _snapshot_lock = threading.RLock()
 
 
-def _encode_obj(obj: Any) -> Any:
-    """Secure JSON encoder for primitives, bytes, and tuple keys/values."""
+def _encode_obj(obj: Any, _memo: dict[int, Any] | None = None, _active: set[int] | None = None) -> Any:
+    """Secure JSON encoder for primitives, bytes, and tuple keys/values.
+
+    The checkpoint stores are large and heavily shared — the same state dict or
+    blob is reachable from many writes — so the encoder memoizes each container
+    by ``id()`` and encodes it once.  Without this, ``_snapshot`` (which runs
+    after every ``put`` / ``put_writes`` while holding ``_snapshot_lock``)
+    re-walked shared sub-objects once per reference, which is exponential in
+    the sharing depth and left every other executor thread blocked on the lock.
+
+    ``_active`` is the current recursion path: a container reached again while
+    it is still being encoded is a genuine cycle, which JSON cannot represent,
+    so it fails fast with a clear :class:`ValueError` instead of recursing
+    until ``RecursionError``.  Acyclic sharing (a container seen *after* it has
+    been fully encoded) is served from ``_memo`` and is not an error.
+
+    Output stays byte-for-byte compatible with :func:`_decode_obj` (same
+    ``__bytes__`` / ``__tuple__`` / ``__tuple_key__`` markers, JSON-safe).
+    """
+    if _memo is None:
+        _memo = {}
+    if _active is None:
+        _active = set()
+    if isinstance(obj, (bytes, tuple, list, dict)):
+        obj_id = id(obj)
+        if obj_id in _active:
+            raise ValueError(
+                "cyclic checkpoint structure: a "
+                f"{type(obj).__name__} refers to itself; refusing to encode"
+            )
+        if obj_id in _memo:
+            return _memo[obj_id]
     if isinstance(obj, bytes):
-        return {"__bytes__": base64.b64encode(obj).decode("ascii")}
+        encoded = {"__bytes__": base64.b64encode(obj).decode("ascii")}
+        _memo[obj_id] = encoded
+        return encoded
     if isinstance(obj, tuple):
-        return {"__tuple__": [_encode_obj(x) for x in obj]}
+        _active.add(obj_id)
+        try:
+            encoded = {"__tuple__": [_encode_obj(x, _memo, _active) for x in obj]}
+        finally:
+            _active.discard(obj_id)
+        _memo[obj_id] = encoded
+        return encoded
     if isinstance(obj, list):
-        return [_encode_obj(x) for x in obj]
+        _active.add(obj_id)
+        try:
+            encoded = [_encode_obj(x, _memo, _active) for x in obj]
+        finally:
+            _active.discard(obj_id)
+        _memo[obj_id] = encoded
+        return encoded
     if isinstance(obj, dict):
-        return {
-            (str(k) if not isinstance(k, tuple) else "__tuple_key__" + json.dumps([_encode_obj(x) for x in k])): _encode_obj(v)
-            for k, v in obj.items()
-        }
+        _active.add(obj_id)
+        try:
+            encoded = {
+                (
+                    "__tuple_key__" + json.dumps([_encode_obj(x, _memo, _active) for x in k])
+                    if isinstance(k, tuple)
+                    else str(k)
+                ): _encode_obj(v, _memo, _active)
+                for k, v in obj.items()
+            }
+        finally:
+            _active.discard(obj_id)
+        _memo[obj_id] = encoded
+        return encoded
     return obj
 
 
