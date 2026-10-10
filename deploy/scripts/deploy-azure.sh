@@ -116,6 +116,13 @@ if az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --
         --set-env-vars \
             "${ACA_ENV_VARS[@]}" \
         --output table
+    echo "♻️  Restarting the revision so the running code matches the new image + env..."
+    _active_rev=$(az containerapp revision list --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --query "[?properties.active].name | [0]" -o tsv)
+    az containerapp revision restart \
+        --name "$APP_NAME" \
+        --resource-group "$RESOURCE_GROUP" \
+        --revision "$_active_rev" \
+        --output none
 else
     az containerapp create \
         --name "$APP_NAME" \
