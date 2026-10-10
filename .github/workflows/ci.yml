@@ -133,7 +133,15 @@ jobs:
         with:
           fetch-depth: 0
       - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        # GITHUB_TOKEN is mandatory since gitleaks-action v2 (it fetches the PR
+        # diff); without it the job fails with "GITHUB_TOKEN is now required to
+        # scan pull requests" on every PR, so the gate could not tell a clean
+        # PR from a leaking one. v3 because v2 runs on Node 20, which hosted
+        # runners no longer execute. Pinned to a full commit SHA so a mutable
+        # tag cannot swap what runs here (Sonar S7637).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   trivy:
     # Vulnerability scanning — blocking gate (CRITICAL,HIGH, ignore-unfixed).
