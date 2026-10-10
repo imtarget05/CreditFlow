@@ -250,10 +250,16 @@ def _cors_middleware():
     return next(m for m in app.user_middleware if m.cls is CORSMiddleware)
 
 
-def test_cors_uses_an_explicit_origin_list():
+def test_cors_uses_an_explicit_origin_list(monkeypatch):
+    # The CORSMiddleware snapshot is taken at import; the running app's real
+    # contract is allowed_origins() with no caller overrides — the autouse
+    # auth_env fixture deletes any caller-supplied value, so this asserts
+    # the code default, not the developer's loopback .env.
+    monkeypatch.delenv("CREDITFLOW_CORS_ORIGINS", raising=False)
+    origins = allowed_origins()
+    assert "*" not in origins
+    assert origins == list(security.DEFAULT_CORS_ORIGINS)
     options = _cors_middleware().kwargs
-    assert "*" not in options["allow_origins"]
-    assert options["allow_origins"] == list(security.DEFAULT_CORS_ORIGINS)
     # A wildcard is never combined with credentials.
     assert options["allow_credentials"] is False
     assert "*" not in options["allow_methods"]

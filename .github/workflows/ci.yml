@@ -39,6 +39,11 @@ jobs:
         # Test isolation: live/infra-marked tests need real LLM/infra endpoints
         # and never run in default jobs — they run in ci-live.yml (manual).
         # Markers registered in pytest.ini, hence --strict-markers.
+        # Hermetic CORS: drop any caller-supplied CREDITFLOW_CORS_ORIGINS so
+        # the contract test asserts security.DEFAULT_CORS_ORIGINS, not the
+        # developer's loopback .env.
+        env:
+          CREDITFLOW_CORS_ORIGINS: ""
         run: python -m pytest tests/ -q -m "not integration and not slow and not live and not infra" --strict-markers
 
       # Plan 2026-09-18 safety gates: bundle contract, replay-safe
