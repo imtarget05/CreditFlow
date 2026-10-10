@@ -94,7 +94,12 @@ def test_azure_deploy_workflow_runs_production_smoke_after_deploy():
     assert "production must fail closed on simulated gateways" in content
     assert 'az containerapp secret set' in deploy_script
     assert 'CREDITFLOW_API_KEY=secretref:creditflow-api-key' in deploy_script
-    assert '"CREDITFLOW_ENV=production"' not in deploy_script.split('--set-env-vars', 1)[-1].split('--output table', 1)[0]
+    # CREDITFLOW_ENV=production must be in ACA_ENV_VARS so BOTH the update
+    # path (--set-env-vars) and the create path (--env-vars) carry it; the
+    # app was stuck in development mode because only create set it (CD gate
+    # 'Require production runtime mode' failed on 2026-10-10).
+    env_block = deploy_script.split('ACA_ENV_VARS=(', 1)[1].split(')', 1)[0]
+    assert '"CREDITFLOW_ENV=production"' in env_block
     assert '--env-vars "CREDITFLOW_ENV=production" "${ACA_ENV_VARS[@]}"' in deploy_script
     assert 'if [ -z "$API_KEY" ]; then' in deploy_script
     assert 'API_KEY="${CREDITFLOW_API_KEY:-}"' in deploy_script

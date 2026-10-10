@@ -220,8 +220,11 @@ def health():
     chk = getattr(app.state, "checkpointer", None)
     corrupt = bool(getattr(chk, "checkpoint_corrupt", False))
     prod_sim = _os.environ.get("CREDITFLOW_ENV", "development").lower() == "production"
-    # Readiness without customer data: bundle + checkpoint quarantine gates.
-    status = "ok" if (model_loaded and not corrupt and not prod_sim) else (
+    # Read-only: bundle + checkpoint quarantine gates.
+    # NOTE: CREDITFLOW_ENV=production fails the *agent pipeline* closed
+    # (fetch_gateways refuses simulated CIC/bank data) — but the ML scoring
+    # path served here (/health, /predict) is real and stays ready.
+    status = "ok" if (model_loaded and not corrupt) else (
         "degraded" if model_loaded else "unready"
     )
     return HealthResponse(
@@ -256,9 +259,12 @@ def health_ready():
         "checkpoint": "not-ready: checkpoint corrupt" if corrupt else "ok",
         "config": "ok",
     }
-    prod_sim = _os.environ.get("CREDITFLOW_ENV", "development").lower() == "production"
-    if prod_sim:
-        checks["config"] = "not-ready: CREDITFLOW_ENV=production simulation gate"
+    # Production fail-closed applies to the *agent pipeline* (fetch_gateways
+    # refuses simulated CIC/bank data in production). The ML scoring path
+    # (/health, /predict) is real and stays ready — readiness must not be
+    # conflated with the simulation gate, so checks keep the exact "ok"
+    # sentinel while the note rides on a separate field.
+    production = _os.environ.get("CREDITFLOW_ENV", "development").lower() == "production"
     ready = all(value == "ok" for value in checks.values())
     return {
         "status": "ready" if ready else "not-ready",
@@ -267,6 +273,7 @@ def health_ready():
         # "sqlite" (shared, DATABASE_URL) or "file" (single-process local file).
         "checkpoint_backend": getattr(app.state, "checkpoint_backend", "unset"),
         "model_version": meta.get("version", "unknown"),
+        "runtime_mode": "production (agent pipeline fail-closed, ML scoring live)" if production else "development",
     }
 
 

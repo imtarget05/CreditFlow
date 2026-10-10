@@ -14,12 +14,14 @@ APP_NAME="creditflow-api"
 TARGET_PORT=8080
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 API_KEY="${CREDITFLOW_API_KEY:-}"
-# Canonical frontend is Cloudflare Pages; GitHub Pages kept during transition.
+# Canonical frontend is GitHub Pages (imtarget05.github.io/CreditFlow);
+# Cloudflare Pages project `creditflow` was retired (cf. cd.yml).
 # backend/security.py:allowed_origins() accepts a comma-separated list.
 API_ORIGIN="https://imtarget05.github.io"
 ACA_SECRETS=("creditflow-api-key=${API_KEY}")
 ACA_ENV_VARS=(
     "PORT=8080"
+    "CREDITFLOW_ENV=production"
     "CREDITFLOW_API_KEY=secretref:creditflow-api-key"
     "CREDITFLOW_CORS_ORIGINS=${API_ORIGIN}"
 )
