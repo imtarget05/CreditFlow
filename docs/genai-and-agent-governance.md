@@ -53,7 +53,10 @@ approval, threshold, ledger-write, or disbursement tools.
 
 Run `python scripts/eval_explanations.py --llm-judge` only when intentionally
 evaluating the checked-in synthetic fixtures. The default judge provider is
-Cloudflare Workers AI. To compare a larger Azure-hosted judge model, set
+Cloudflare Workers AI. Its default judge model is
+`@cf/meta/llama-3.1-8b-instruct`, requested in JSON Mode with a score schema;
+the optional explanation provider may use a different model. To compare a
+larger Azure-hosted judge model, set
 `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and
 `AZURE_OPENAI_JUDGE_DEPLOYMENT`, then pass `--judge-provider azure-openai`.
 The deployment name is supplied with `--judge-model` when needed. These values
@@ -66,6 +69,13 @@ decision. Save the generated evaluation JSON for comparison, review proposed
 prompt edits manually, then rerun the same fixtures. A judge score is not a
 credit-risk metric or proof that an explanation is faithful; deterministic
 numeric-grounding checks and human review remain separate.
+
+On 2026-11-03, a live Cloudflare call using three fixed synthetic profiles
+returned schema-valid scores in all three cases. Mean advisory scores were
+grounding 4.00, completeness 4.67, actionability 4.00, and decision-boundary
+discipline 2.67 (each on a 1–5 scale). This checks API execution and output
+shape only. Judge accuracy, agreement with independent human ratings, and
+repeatability have not been measured.
 
 ## Model monitoring and escalation
 

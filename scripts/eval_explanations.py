@@ -20,10 +20,26 @@ from statistics import median
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pipeline.agent.explanations import generate_explanation
-from pipeline.agent.llm_provider import DEFAULT_MODEL
 
 
 LOW_RISK = {"income": 5000000, "age": 35, "employment_years": 10, "loan_amount": 20000000, "loan_term": 36, "existing_debt": 3000000, "credit_history": 8, "previous_defaults": 0}
+
+DEFAULT_JUDGE_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+JUDGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        name: {"type": "integer", "minimum": 1, "maximum": 5}
+        for name in ("grounding", "completeness", "actionability", "decision_boundary")
+    } | {
+        "issues": {"type": "array", "items": {"type": "string"}},
+        "suggested_prompt_revision": {"type": "string"},
+    },
+    "required": [
+        "grounding", "completeness", "actionability", "decision_boundary",
+        "issues", "suggested_prompt_revision",
+    ],
+}
+
 
 def run_eval(profiles: list[dict]) -> dict:
     """Evaluate explanation quality across profiles (offline-safe).
@@ -79,8 +95,7 @@ def run_llm_judge(
         judge_model = (
             model
             or os.environ.get("CLOUDFLARE_JUDGE_MODEL", "").strip()
-            or os.environ.get("CLOUDFLARE_MODEL", "").strip()
-            or DEFAULT_MODEL
+            or DEFAULT_JUDGE_MODEL
         )
         endpoint = f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{judge_model}"
         headers = {"Authorization": f"Bearer {token}"}
@@ -127,7 +142,11 @@ def run_llm_judge(
             "max_tokens": 350,
             "temperature": 0,
         }
-        if provider == "azure-openai":
+        if provider == "cloudflare":
+            body["response_format"] = {
+                "type": "json_schema", "json_schema": JUDGE_SCHEMA,
+            }
+        else:
             body["model"] = judge_model
             body["response_format"] = {"type": "json_object"}
         response = httpx.post(
