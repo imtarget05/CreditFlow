@@ -66,6 +66,12 @@ flowchart LR
 secret (`secretref` trong `deploy/scripts/deploy-azure.sh`), chỉ dùng server-side cho smoke;
 **frontend không nhúng key** (key cũ đã gỡ khỏi bundle Pages). Endpoint ledger/audit/approve đều bắt xác thực.
 
+**Cloudflare role:** Workers AI is an optional backend explanation provider, not the current
+frontend host. Cloudflare Pages is not the canonical deployment until a project hostname and
+deployment workflow are verified. The Render service is a configured mirror, not automatic
+failover. Provider/data-class boundaries and the Azure OpenAI judge path are documented in
+[`genai-and-agent-governance.md`](genai-and-agent-governance.md).
+
 ### Dual deployment profiles (bảng thiết kế — hiện trạng verified ở mục 3)
 
 | Dimension | `PROFILE=portfolio` (Demo) | `PROFILE=production` (Azure enterprise — mục tiêu) |
@@ -181,8 +187,11 @@ flowchart TD
   mọi fallback ra OpenAI/Groq/Cloudflare/Anthropic — không có "fallback PUBLIC" âm thầm.
 - **Guardrail production:** `CREDITFLOW_ENV=production` mà gọi được gateway mô phỏng →
   `RuntimeError(GATEWAY_UNAVAILABLE)` — gate này chạy ngay trong CI (`deploy-azure.yml`) trước khi deploy.
-- **Drift (MLOps):** PSI hằng ngày so baseline; PSI ≥ 0.25 → event `ModelDriftDetected` ra outbox;
+- **Drift (MLOps):** PSI hằng ngày so baseline; PSI ≥ 0.20 → event `ModelDriftDetected` ra outbox;
   model bundle sai `SHA256SUMS` → không bao giờ vào serving.
+- **Model governance:** [`model-card.md`](model-card.md) documents the synthetic proxy model's
+  intended use, test metrics, calibration/fairness diagnostics, and proposed manual review bands.
+  Regenerate derived metrics with `python scripts/build_model_card.py`.
 
 ## 7. Clean Architecture Layering (giữ nguyên ranh giới)
 

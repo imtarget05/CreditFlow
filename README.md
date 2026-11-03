@@ -295,17 +295,17 @@ The system was trained on a **5,000-row synthetic proxy dataset** (seed `42`, ~1
 
 ---
 
-## ☁️ Deployment — CHỐT: PRIVATE ON-PREM (ENTERPRISE)
+## ☁️ Deployment & GenAI boundaries
 
-- **Deployment duy nhất: PRIVATE ON-PREM** — lõi Deterministic ML + Rule Engine nội bộ, LLM memo chạy Private vLLM nội bộ (Local VPC). Không fallback Public Cloud cho data CONFIDENTIAL.
+- **Portfolio demo plane:** Azure Container Apps hosts the canonical FastAPI + ML decision service; GitHub Pages hosts the current frontend; Render is a separately configured API/Postgres mirror. See `docs/deployment.md` for current routes and deployment gates.
+- **Cloudflare:** Workers AI is an optional backend explanation provider. Cloudflare Pages is not the current canonical frontend host. Do not send applicant data to an external provider by default.
+- **Enterprise target:** private/on-prem deterministic ML and rules with a private LLM endpoint. This is a target architecture, not a claim that the public portfolio deployment is private/on-prem.
+- **LLM boundary:** LLMs explain already-computed results. `CONFIDENTIAL` inputs are blocked from public providers unless an explicit demo override is set; failures fall back to deterministic text and never change the decision.
 - **Training**: Traditional ML Training from Scratch trên Colab (`colab/train_credit_T4.ipynb`, LogReg/XGBoost tabular).
 - **Processing**: Rule Filter DTI/LTI + TF-IDF cosine inference (local, offline-safe).
-- **Policy Guard cứng** (`pipeline/agent/explanations.py:is_public_cloud`): `CONFIDENTIAL` tuyệt đối chặn gửi ra public cloud (OpenAI/Groq/Cloudflare/Anthropic/Google) → route về Private vLLM (`ollama`/`local_vllm`) hoặc deterministic template fallback. Public cloud chỉ dùng cho data PUBLIC hoặc tắt hẳn.
-- **Compliance**: Banking Secrecy / GDPR / SBV — CONFIDENTIAL never leaks. Xem `docs/DEPLOYMENT_PRIVATE_ONPREM.md`.
-- **Planes**: Azure Container Apps (canonical API) + GitHub Pages (frontend) +
-  Render (API + Postgres mirror) = **portfolio demo plane**;
-  enterprise deployment target = **PRIVATE ON-PREM** như trên. Public cloud env
-  chỉ dành cho data PUBLIC.
+- **Domain agents:** Underwriting Risk, Fraud & Compliance, Explainability, and Disbursement Execution are existing LangGraph workflow subagents. Their responsibilities and tool boundaries are documented in `docs/genai-and-agent-governance.md`.
+- **Governance docs:** `docs/model-card.md` explains intended use, synthetic-data limits, evaluation, fairness diagnostics, and monitoring actions. Regenerate its quantitative sections with `python scripts/build_model_card.py` after installing the project dependencies.
+- **LLM judge:** `python scripts/eval_explanations.py --llm-judge` explicitly evaluates fixed synthetic examples only. For an Azure OpenAI judge, use `--judge-provider azure-openai`; judge scores and prompt edits are advisory and never change model weights or decisions.
 
 ---
 

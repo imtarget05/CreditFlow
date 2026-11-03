@@ -167,11 +167,19 @@ def train(force_regenerate: bool = False, reason: str = "") -> None:
                 "val_recall": round(float(m_val["recall"]), 4),
                 "val_f1": round(float(m_val["f1"]), 4),
                 "val_roc_auc": round(float(m_val["roc_auc"]), 4) if m_val.get("roc_auc") is not None else None,
+                "val_pr_auc": round(float(m_val["pr_auc"]), 4) if m_val.get("pr_auc") is not None else None,
+                "val_ks": round(float(m_val["ks"]), 4) if m_val.get("ks") is not None else None,
+                "val_brier_score": round(float(m_val["brier_score"]), 4) if m_val.get("brier_score") is not None else None,
+                "val_expected_calibration_error": round(float(m_val["expected_calibration_error"]), 4) if m_val.get("expected_calibration_error") is not None else None,
                 "test_accuracy": round(float(m_test["accuracy"]), 4),
                 "test_precision": round(float(m_test["precision"]), 4),
                 "test_recall": round(float(m_test["recall"]), 4),
                 "test_f1": round(float(m_test["f1"]), 4),
                 "test_roc_auc": round(float(m_test["roc_auc"]), 4) if m_test.get("roc_auc") is not None else None,
+                "test_pr_auc": round(float(m_test["pr_auc"]), 4) if m_test.get("pr_auc") is not None else None,
+                "test_ks": round(float(m_test["ks"]), 4) if m_test.get("ks") is not None else None,
+                "test_brier_score": round(float(m_test["brier_score"]), 4) if m_test.get("brier_score") is not None else None,
+                "test_expected_calibration_error": round(float(m_test["expected_calibration_error"]), 4) if m_test.get("expected_calibration_error") is not None else None,
             }
         )
         fitted[name] = pipe
@@ -204,6 +212,10 @@ def train(force_regenerate: bool = False, reason: str = "") -> None:
             "recall": float(best["val_recall"]),
             "f1": float(best["val_f1"]),
             "roc_auc": float(best["val_roc_auc"]) if best.get("val_roc_auc") is not None else None,
+            "pr_auc": float(best["val_pr_auc"]) if best.get("val_pr_auc") is not None else None,
+            "ks": float(best["val_ks"]) if best.get("val_ks") is not None else None,
+            "brier_score": float(best["val_brier_score"]) if best.get("val_brier_score") is not None else None,
+            "expected_calibration_error": float(best["val_expected_calibration_error"]) if best.get("val_expected_calibration_error") is not None else None,
         },
         "test_metrics": {
             "accuracy": float(best["test_accuracy"]),
@@ -211,6 +223,10 @@ def train(force_regenerate: bool = False, reason: str = "") -> None:
             "recall": float(best["test_recall"]),
             "f1": float(best["test_f1"]),
             "roc_auc": float(best["test_roc_auc"]) if best.get("test_roc_auc") is not None else None,
+            "pr_auc": float(best["test_pr_auc"]) if best.get("test_pr_auc") is not None else None,
+            "ks": float(best["test_ks"]) if best.get("test_ks") is not None else None,
+            "brier_score": float(best["test_brier_score"]) if best.get("test_brier_score") is not None else None,
+            "expected_calibration_error": float(best["test_expected_calibration_error"]) if best.get("test_expected_calibration_error") is not None else None,
         },
         "confusion_matrix": {
             "true_positive": int(tp),
@@ -322,10 +338,14 @@ def _log_mlflow(model_name, version, meta, results, best_pipe, artifact_path) ->
                 mlflow.log_param("fp_cost", meta["fp_cost"])
                 for col in (
                     "val_accuracy", "val_precision", "val_recall", "val_f1",
-                    "test_accuracy", "test_precision", "test_recall", "test_f1",
-                    "business_cost",
+                    "val_roc_auc", "val_pr_auc", "val_ks", "val_brier_score",
+                    "val_expected_calibration_error", "test_accuracy",
+                    "test_precision", "test_recall", "test_f1", "test_roc_auc",
+                    "test_pr_auc", "test_ks", "test_brier_score",
+                    "test_expected_calibration_error", "business_cost",
                 ):
-                    mlflow.log_metric(col, float(row[col]))
+                    if pd.notna(row[col]):
+                        mlflow.log_metric(col, float(row[col]))
         mlflow.log_metric("business_cost", meta["business_cost"])
         mlflow.log_metric("rows", meta["rows"])
         try:

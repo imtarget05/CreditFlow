@@ -29,7 +29,8 @@ services:
       - key: CREDITFLOW_API_KEY
         generateValue: true
       # Comma allow-list consumed by backend/security.py:allowed_origins().
-      # Cloudflare Pages is canonical; GitHub Pages kept during transition.
+      # Current canonical frontend origin; change only after a Cloudflare Pages
+      # hostname is verified and the frontend deployment workflow is switched.
       - key: CREDITFLOW_CORS_ORIGINS
         value: https://imtarget05.github.io
       # Neon Postgres connection string — set in the Render dashboard
