@@ -24,7 +24,7 @@ from pipeline.agent.explanations import generate_explanation
 
 LOW_RISK = {"income": 5000000, "age": 35, "employment_years": 10, "loan_amount": 20000000, "loan_term": 36, "existing_debt": 3000000, "credit_history": 8, "previous_defaults": 0}
 
-DEFAULT_JUDGE_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+DEFAULT_JUDGE_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 JUDGE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -76,7 +76,8 @@ def run_eval(profiles: list[dict]) -> dict:
 
 
 def run_llm_judge(
-    profiles: list[dict], provider: str = "cloudflare", model: str | None = None
+    profiles: list[dict], provider: str = "cloudflare", model: str | None = None,
+    explanations: list[dict] | None = None,
 ) -> dict:
     """Optionally score explanations with a configured LLM on synthetic cases.
 
@@ -86,6 +87,9 @@ def run_llm_judge(
     never changes prompts or model artifacts automatically.
     """
     import httpx
+
+    if explanations is not None and len(explanations) != len(profiles):
+        raise ValueError("explanations must contain one entry per profile")
 
     if provider == "cloudflare":
         account = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
@@ -115,7 +119,7 @@ def run_llm_judge(
         raise ValueError("judge provider must be 'cloudflare' or 'azure-openai'")
     results = []
     for index, profile in enumerate(profiles, start=1):
-        explanation = generate_explanation({
+        explanation = explanations[index - 1] if explanations is not None else generate_explanation({
             "customer_data": profile, "data_classification": "PUBLIC_SYNTHETIC",
             "risk_score": 0.5, "risk_level": "MEDIUM", "decision": "REVIEW",
             "model_name": "logistic_regression", "reasons": ["high debt-to-income ratio"],

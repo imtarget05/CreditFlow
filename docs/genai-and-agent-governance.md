@@ -54,7 +54,7 @@ approval, threshold, ledger-write, or disbursement tools.
 Run `python scripts/eval_explanations.py --llm-judge` only when intentionally
 evaluating the checked-in synthetic fixtures. The default judge provider is
 Cloudflare Workers AI. Its default judge model is
-`@cf/meta/llama-3.1-8b-instruct`, requested in JSON Mode with a score schema;
+`@cf/meta/llama-3.3-70b-instruct-fp8-fast`, requested in JSON Mode with a score schema;
 the optional explanation provider may use a different model. To compare a
 larger Azure-hosted judge model, set
 `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and
@@ -73,9 +73,17 @@ numeric-grounding checks and human review remain separate.
 On 2026-11-03, a live Cloudflare call using three fixed synthetic profiles
 returned schema-valid scores in all three cases. Mean advisory scores were
 grounding 4.00, completeness 4.67, actionability 4.00, and decision-boundary
-discipline 2.67 (each on a 1–5 scale). This checks API execution and output
-shape only. Judge accuracy, agreement with independent human ratings, and
-repeatability have not been measured.
+discipline 2.67 (each on a 1–5 scale) with the prior 8B judge. A controlled
+contrast then compared a review-safe explanation against one with fabricated
+income and automatic approval, plus an incomplete explanation. The 8B model
+ranked only 2 of 4 expected defect comparisons correctly in one run. The 70B
+model ranked all 4 correctly in each of two runs (8/8) and is now the default
+for this manually invoked evaluation. Reproduce the contrast with
+`python scripts/benchmark_llm_judge.py --live --repeat 2 --output <path>` after
+configuring Cloudflare credentials. The 70B model has a higher per-token price
+than the 8B model; see the [Cloudflare model pricing](https://developers.cloudflare.com/workers-ai/models/llama-3.3-70b-instruct-fp8-fast/).
+These small constructed cases do not measure agreement with independent human
+ratings or real-world explanation quality.
 
 ## Model monitoring and escalation
 
