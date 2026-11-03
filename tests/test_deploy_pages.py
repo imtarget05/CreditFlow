@@ -1,7 +1,14 @@
 """Tests for GitHub Pages deployment artifacts (frontend + Azure backend).
 
-No live Cloudflare API calls. Network-dependent tests are marked
-``pytest.mark.integration`` so they still run, but are identifiable.
+No live Cloudflare API calls. The GitHub Pages / cd.yml assertions are hermetic
+and run without network.
+
+The two Azure backend checks (``test_azure_backend_health_endpoint_reachable``
+and ``test_azure_backend_predict_endpoint_reachable``) perform **real HTTP calls
+to the live Azure backend** at AZURE_BASE. They are marked
+``pytest.mark.integration`` and additionally skip unless
+``CREDITFLOW_RUN_AZURE_SMOKE=1`` is set, so a fresh clone never assumes the
+remote backend is reachable or hermetic.
 """
 from __future__ import annotations
 
@@ -212,6 +219,10 @@ def test_pages_build_output_contains_redirects():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.integration
+@pytest.mark.skipif(
+    os.environ.get("CREDITFLOW_RUN_AZURE_SMOKE") != "1",
+    reason="live Azure smoke; set CREDITFLOW_RUN_AZURE_SMOKE=1 to run",
+)
 def test_azure_backend_health_endpoint_reachable():
     try:
         resp = requests.get(f"{AZURE_BASE}/health/live", timeout=10)
@@ -223,6 +234,10 @@ def test_azure_backend_health_endpoint_reachable():
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(
+    os.environ.get("CREDITFLOW_RUN_AZURE_SMOKE") != "1",
+    reason="live Azure smoke; set CREDITFLOW_RUN_AZURE_SMOKE=1 to run",
+)
 def test_azure_backend_predict_endpoint_reachable():
     try:
         resp = requests.post(
