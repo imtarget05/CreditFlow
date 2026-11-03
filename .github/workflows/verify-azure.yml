@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
-      EXPECTED_FQDN: creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io
+      EXPECTED_FQDN: creditflow-api.proudstone-70150af3.southeastasia.azurecontainerapps.io
     steps:
       - uses: actions/checkout@v4
 
