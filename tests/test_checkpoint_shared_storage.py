@@ -323,6 +323,11 @@ def test_shared_required_raises_when_the_store_is_unreachable(monkeypatch):
 def test_shared_graph_endpoint_uses_the_shared_checkpointer(monkeypatch):
     import backend.app as app_module
 
+    if getattr(app_module.app.state, "pipeline", None) is None:
+        app_module.app.state.pipeline, app_module.app.state.meta = (
+            app_module.load_production_model()
+        )
+
     # A real BaseCheckpointSaver so the graph can compile; identity is what
     # proves the wiring picked the object create_checkpointer() handed back.
     shared = InMemorySaver()
@@ -332,8 +337,6 @@ def test_shared_graph_endpoint_uses_the_shared_checkpointer(monkeypatch):
         lambda path=None: (shared, "postgres"),
     )
     monkeypatch.setattr(app_module, "_shared_graph", None)
-    monkeypatch.setattr(app_module.app.state, "pipeline", None, raising=False)
-    monkeypatch.setattr(app_module.app.state, "meta", {}, raising=False)
     # Earlier graph-endpoint tests may leak a compiled checkpointer onto
     # app.state; _build_shared_graph() reuses any non-None value, which would
     # bypass the patched create_checkpointer() below. Clear it so the wiring
@@ -356,9 +359,12 @@ def test_shared_graph_endpoint_falls_back_to_the_file_saver(
     monkeypatch.setenv("CREDITFLOW_CHECKPOINT_DB", str(tmp_path / "cp.json"))
     import backend.app as app_module
 
+    if getattr(app_module.app.state, "pipeline", None) is None:
+        app_module.app.state.pipeline, app_module.app.state.meta = (
+            app_module.load_production_model()
+        )
+
     monkeypatch.setattr(app_module, "_shared_graph", None)
-    monkeypatch.setattr(app_module.app.state, "pipeline", None, raising=False)
-    monkeypatch.setattr(app_module.app.state, "meta", {}, raising=False)
 
     try:
         app_module._build_shared_graph()
