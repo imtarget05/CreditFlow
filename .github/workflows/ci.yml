@@ -262,7 +262,9 @@ jobs:
       - name: SonarCloud scan
         if: env.SONAR_TOKEN != ''
         run: |
-          curl -sL https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip -o sonar-scanner.zip
+          curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip \
+            -o sonar-scanner.zip
           unzip -q sonar-scanner.zip
           PATH="$PATH:$PWD/sonar-scanner-5.0.1.3006-linux/bin"
           export PATH
