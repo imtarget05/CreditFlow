@@ -32,9 +32,10 @@ import jwt
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from flask import Flask, jsonify, request
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import JSONResponse
 
-app = Flask(__name__)
+app = FastAPI(title="Synthetic OIDC IdP", docs_url=None, redoc_url=None)
 
 # ---------------------------------------------------------------------------
 # RSA key pair (generated in memory, never persisted — demo scope only)
@@ -55,15 +56,17 @@ AUDIENCE = os.environ.get("MOCK_OIDC_AUDIENCE", "creditflow")
 PORT = int(os.environ.get("MOCK_OIDC_PORT", "9099"))
 
 
-@app.before_request
-def reject_cross_origin_writes():
+@app.middleware("http")
+async def reject_cross_origin_writes(request: Request, call_next):
     """Reject browser form submissions from another site to the local demo IdP."""
     if request.method != "POST":
-        return None
+        return await call_next(request)
     origin = request.headers.get("Origin")
-    if origin and urlsplit(origin).netloc != urlsplit(ISSUER).netloc:
-        return jsonify({"error": "cross_origin_request"}), 403
-    return None
+    expected = urlsplit(ISSUER)
+    received = urlsplit(origin) if origin else None
+    if received and (received.scheme, received.netloc) != (expected.scheme, expected.netloc):
+        return JSONResponse({"error": "cross_origin_request"}, status_code=403)
+    return await call_next(request)
 
 # JWKS: convert public PEM to JWK format
 
@@ -103,8 +106,7 @@ _issued_tokens: dict[str, dict] = {}
 # ---------------------------------------------------------------------------
 @app.get("/.well-known/openid-configuration")
 def discovery():
-    return jsonify(
-        {
+    return {
             "issuer": ISSUER,
             "authorization_endpoint": f"{ISSUER}/authorize",
             "token_endpoint": f"{ISSUER}/token",
@@ -113,22 +115,22 @@ def discovery():
             "subject_types_supported": ["public"],
             "id_token_signing_alg_values_supported": ["RS256"],
         }
-    )
 
 
 @app.get("/keys")
 def jwks():
-    return jsonify(_JWKS)
+    return _JWKS
 
 
 @app.post("/token")
-def token():
-    grant_type = request.form.get("grant_type", "")
-    groups_raw = request.form.get("groups", "")
-    subject = request.form.get("sub", "demo-user")
+def token(
+    grant_type: str = Form(""),
+    groups_raw: str = Form("", alias="groups"),
+    subject: str = Form("demo-user", alias="sub"),
+):
 
     if grant_type != "client_credentials":
-        return jsonify({"error": "unsupported_grant_type"}), 400
+        return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
 
     groups = [g.strip() for g in groups_raw.split(",") if g.strip()]
 
@@ -159,25 +161,24 @@ def token():
         "revoked": False,
     }
 
-    return jsonify(
-        {
+    return {
             "access_token": token,
             "token_type": "Bearer",
             "expires_in": 3600,
             "scope": "openid profile",
         }
-    )
 
 
 @app.post("/token/revoke")
-def revoke():
+def revoke(token: str = Form("")):
     """Revoke a previously issued token (demo scope)."""
-    token = request.form.get("token", "")
     if token in _issued_tokens:
         _issued_tokens[token]["revoked"] = True
-        return jsonify({"result": "success"})
-    return jsonify({"error": "token_not_found"}), 404
+        return {"result": "success"}
+    return JSONResponse({"error": "token_not_found"}, status_code=404)
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=PORT, debug=False)
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")

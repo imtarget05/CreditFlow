@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 import requests
+from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -28,10 +29,10 @@ from scripts.mock_oidc_idp import app as mock_idp_app
 
 
 def test_mock_idp_rejects_cross_origin_token_request():
-    client = mock_idp_app.test_client()
+    client = TestClient(mock_idp_app)
     response = client.post("/token", data={"grant_type": "client_credentials"}, headers={"Origin": "https://attacker.example"})
     assert response.status_code == 403
-    assert response.json == {"error": "cross_origin_request"}
+    assert response.json() == {"error": "cross_origin_request"}
 
 MOCK_IDP_PORT = 9098
 MOCK_IDP_URL = f"http://localhost:{MOCK_IDP_PORT}"
