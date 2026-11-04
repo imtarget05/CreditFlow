@@ -220,6 +220,7 @@ if __name__ == "__main__":
     d.mkdir(parents=True, exist_ok=True)
     import datetime
     f = d / f"llm_eval_{datetime.datetime.now(datetime.UTC).strftime('%Y%m%d-%H%M%S')}.json"
-    f.write_text(json.dumps(out, indent=2, ensure_ascii=False))
+    with f.open("w", encoding="utf-8") as output:
+        json.dump(out, output, indent=2, ensure_ascii=False)
     print(json.dumps(out, indent=2, ensure_ascii=False), f"\nwrote {f}")
     _log_eval_mlflow(out)

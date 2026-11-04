@@ -39,6 +39,17 @@ EXPLANATIONS = [
 ]
 CASE_NAMES = ("grounded", "contradictory", "incomplete")
 SCORE_NAMES = ("grounding", "completeness", "actionability", "decision_boundary")
+OUTPUT_DIR = Path("models/evaluation").resolve()
+
+
+def resolve_output_path(raw_path: Path) -> Path:
+    """Keep benchmark output inside the synthetic evaluation artifact directory."""
+    candidate = (OUTPUT_DIR / raw_path.name).resolve()
+    if raw_path.is_absolute() or raw_path.name in ("", ".", "..") or raw_path.suffix != ".json":
+        raise ValueError("--output must be a JSON filename under models/evaluation")
+    if raw_path != Path(raw_path.name) or not candidate.is_relative_to(OUTPUT_DIR):
+        raise ValueError("--output must be a JSON filename under models/evaluation")
+    return candidate
 
 
 def check_result(cases: list[dict]) -> dict:
@@ -104,8 +115,10 @@ def main() -> None:
         "limitation": "Controlled synthetic defects; no independent human labels or real-applicant data.",
     }
     if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        target = resolve_output_path(args.output)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        with target.open("w", encoding="utf-8") as output:
+            json.dump(report, output, indent=2, ensure_ascii=False)
     print(json.dumps({key: report[key] for key in (
         "provider", "model", "repeats", "passed_checks", "total_checks", "limitation"
     )}, ensure_ascii=False))

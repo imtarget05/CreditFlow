@@ -1,6 +1,20 @@
 """A contrast pass must reflect ranking of known synthetic defects."""
 
-from scripts.benchmark_llm_judge import check_result
+from pathlib import Path
+
+import pytest
+
+from scripts.benchmark_llm_judge import OUTPUT_DIR, check_result, resolve_output_path
+
+
+@pytest.mark.parametrize("name", ["../outside.json", "/tmp/outside.json", "sub/file.json", "report.txt"])
+def test_benchmark_rejects_output_outside_evaluation_directory(name):
+    with pytest.raises(ValueError):
+        resolve_output_path(Path(name))
+
+
+def test_benchmark_accepts_json_filename_in_evaluation_directory():
+    assert resolve_output_path(Path("benchmark.json")) == OUTPUT_DIR / "benchmark.json"
 
 
 def test_judge_contrast_marks_missed_hallucination_and_boundary():

@@ -100,7 +100,9 @@ def main() -> None:
     out = Path("models/evaluation")
     out.mkdir(parents=True, exist_ok=True)
     target = out / "credit_analyst_assistant_eval.json"
-    target.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    with target.open("w", encoding="utf-8") as output:
+        json.dump(result, output, indent=2, ensure_ascii=False)
+        output.write("\n")
     print(json.dumps(result, indent=2, ensure_ascii=False))
     print(f"wrote {target}")
 

@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit
 
 import jwt
 from cryptography.hazmat.backends import default_backend
@@ -52,6 +53,17 @@ _public_pem = _public_key.public_bytes(
 ISSUER = os.environ.get("MOCK_OIDC_ISSUER", "http://localhost:9099")
 AUDIENCE = os.environ.get("MOCK_OIDC_AUDIENCE", "creditflow")
 PORT = int(os.environ.get("MOCK_OIDC_PORT", "9099"))
+
+
+@app.before_request
+def reject_cross_origin_writes():
+    """Reject browser form submissions from another site to the local demo IdP."""
+    if request.method != "POST":
+        return None
+    origin = request.headers.get("Origin")
+    if origin and urlsplit(origin).netloc != urlsplit(ISSUER).netloc:
+        return jsonify({"error": "cross_origin_request"}), 403
+    return None
 
 # JWKS: convert public PEM to JWK format
 

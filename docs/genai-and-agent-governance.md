@@ -98,7 +98,7 @@ income and automatic approval, plus an incomplete explanation. The 8B model
 ranked only 2 of 4 expected defect comparisons correctly in one run. The 70B
 model ranked all 4 correctly in each of two runs (8/8) and is now the default
 for this manually invoked evaluation. Reproduce the contrast with
-`python scripts/benchmark_llm_judge.py --live --repeat 2 --output <path>` after
+`python scripts/benchmark_llm_judge.py --live --repeat 2 --output benchmark.json` after
 configuring Cloudflare credentials. The 70B model has a higher per-token price
 than the 8B model; see the [Cloudflare model pricing](https://developers.cloudflare.com/workers-ai/models/llama-3.3-70b-instruct-fp8-fast/).
 These small constructed cases do not measure agreement with independent human
