@@ -120,6 +120,19 @@ def test_azure_deploy_workflow_runs_production_smoke_after_deploy():
     assert "Check the test, login, deploy and smoke step results above" in content
 
 
+def test_azure_deploy_rejects_mutable_image_tag_before_cloud_calls():
+    script = ROOT / "deploy/scripts/deploy-azure.sh"
+    result = subprocess.run(
+        ["bash", str(script)],
+        env={**os.environ, "IMAGE_TAG": "latest"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "40-character source SHA" in result.stdout
+
+
 def test_creditflow_keepalive_targets_azure():
     workflow = ROOT / ".github" / "workflows" / "keepalive.yml"
     content = workflow.read_text(encoding="utf-8")

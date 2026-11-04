@@ -12,8 +12,12 @@ ACR_NAME="${ACR_NAME:-}"
 CONTAINERAPPS_ENVIRONMENT="${CONTAINERAPPS_ENVIRONMENT:-cae-portfolio-env}"
 APP_NAME="creditflow-api"
 TARGET_PORT=8080
-IMAGE_TAG="${IMAGE_TAG:-latest}"
+IMAGE_TAG="${IMAGE_TAG:-}"
 API_KEY="${CREDITFLOW_API_KEY:-}"
+OIDC_ISSUER="${CREDITFLOW_OIDC_ISSUER:-}"
+OIDC_AUDIENCE="${CREDITFLOW_OIDC_AUDIENCE:-creditflow}"
+OIDC_JWKS_URL="${CREDITFLOW_OIDC_JWKS_URL:-}"
+OIDC_ROLE_MAP_JSON="${CREDITFLOW_OIDC_ROLE_MAP_JSON:-}"
 # Canonical frontend is GitHub Pages (imtarget05.github.io/CreditFlow);
 # Cloudflare Pages project `creditflow` was retired (cf. cd.yml).
 # backend/security.py:allowed_origins() accepts a comma-separated list.
@@ -24,6 +28,10 @@ ACA_ENV_VARS=(
     "CREDITFLOW_ENV=production"
     "CREDITFLOW_API_KEY=secretref:creditflow-api-key"
     "CREDITFLOW_CORS_ORIGINS=${API_ORIGIN}"
+    "CREDITFLOW_OIDC_ISSUER=${OIDC_ISSUER}"
+    "CREDITFLOW_OIDC_AUDIENCE=${OIDC_AUDIENCE}"
+    "CREDITFLOW_OIDC_JWKS_URL=${OIDC_JWKS_URL}"
+    "CREDITFLOW_OIDC_ROLE_MAP_JSON=${OIDC_ROLE_MAP_JSON}"
 )
 
 if [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] && [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
@@ -38,8 +46,23 @@ elif [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; 
     exit 1
 fi
 
+if [[ ! "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "❌ Error: IMAGE_TAG must be an immutable 40-character source SHA."
+    exit 1
+fi
+
 if [ -z "$API_KEY" ]; then
     echo "❌ Error: CREDITFLOW_API_KEY must be supplied from a secret store."
+    exit 1
+fi
+
+if [ -z "$OIDC_ISSUER" ] || [ -z "$OIDC_JWKS_URL" ] || [ -z "$OIDC_ROLE_MAP_JSON" ]; then
+    echo "❌ Error: production deploy requires CREDITFLOW_OIDC_ISSUER, CREDITFLOW_OIDC_JWKS_URL, and CREDITFLOW_OIDC_ROLE_MAP_JSON."
+    exit 1
+fi
+
+if [[ "$OIDC_ISSUER" != https://* ]] || [[ "$OIDC_JWKS_URL" != https://* ]]; then
+    echo "❌ Error: OIDC issuer and JWKS URL must use HTTPS URLs in production."
     exit 1
 fi
 
