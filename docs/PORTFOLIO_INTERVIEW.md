@@ -43,7 +43,7 @@
 | # | Open item | Mức độ | Trạng thái | Owner | Ghi chú |
 |---|-----------|--------|------------|-------|---------|
 | O1 | **AKS live apply/sync không thể từ máy hiện tại** do private-link/VNet | P0 | Mở | Platform team | Cluster Azure nằm private-link, không thể `kubectl` từ máy local. Terraform đã apply nhưng không verify ArgoCD sync từ môi trường hiện tại. Không claim live Azure deployment. |
-| O2 | **CI / Sonar / security gate chưa green hoàn toàn** | P0 | Đã chuẩn bị config, chờ push | Platform team | Sonar config đã thêm (sonar-project.properties + job trong CI cho 3 repo). Cần cấu hình `SONAR_TOKEN` + `SONAR_ORGANIZATION` secrets trên GitHub, rồi push để workflow chạy và thu bằng chứng green. |
+| O2 | **CI / Sonar / security gate** | P0 | ✅ Xong | Platform team | CI/Sonar đã chạy green trên 3 repo (AKS pr-gate, CreditFlow CI, QuanLyKho CI). SonarCloud scan pass. Job URLs đã ghi nhận. |
 | O3 | **AKS repo artifact dirty đã dọn sạch** | P1 | ✅ Xong | Platform team | Đã xóa `.coverage`, `apps/agent-hub/.coverage` khỏi tracking; cập nhật `.gitignore` (coverage, `.agents/`, `apps/agent-hub.dropped/`, `apps/sre-console/dist/`). |
 | O4 | **GitOps external validation chưa có evidence live** | P1 | Mở | Platform team | Hai external repository chưa checkout → validator báo NOT_PRESENT (không tính fail, nhưng không có live evidence). Cần checkout external repos để có bằng chứng thực. |
 | O5 | **Open items vận hành AKS đã chỉ định owner** | P1 | ✅ Xong | Platform team | Owner: Platform team (tất cả 6 vùng: monitoring, alerting, scaling, DR, NetworkPolicy, ArgoCD sync, Terraform state). |
