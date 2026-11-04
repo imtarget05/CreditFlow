@@ -12,7 +12,7 @@ GitHub Pages (frontend) ──→ Azure Container Apps (FastAPI backend, canonic
 | Component | Platform | URL |
 |-----------|----------|-----|
 | Frontend (React/Vite SPA) | GitHub Pages | `https://imtarget05.github.io/CreditFlow/` |
-| Backend (FastAPI + model) | Azure Container Apps | `https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io` |
+| Backend (FastAPI + model) | Azure Container Apps | `https://creditflow-api.proudstone-70150af3.southeastasia.azurecontainerapps.io` |
 | Backend mirror (DB on Neon via `DATABASE_URL`) | Render | `https://creditflow-api-9z1v.onrender.com` |
 | LLM explanations | Cloudflare Workers AI | REST API (called by backend, NOT frontend) |
 | Docker images | GHCR | `ghcr.io/<owner>/creditflow/creditflow-{api,web}` |
@@ -33,15 +33,15 @@ GitHub Pages (frontend) ──→ Azure Container Apps (FastAPI backend, canonic
 ### Verify Backend
 
 ```bash
-curl https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io/health/live
+curl https://creditflow-api.proudstone-70150af3.southeastasia.azurecontainerapps.io/health/live
 # {"status":"ok","model_loaded":true,"model_version":"...","model_name":"..."}
 
-curl -X POST https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io/predict \
+curl -X POST https://creditflow-api.proudstone-70150af3.southeastasia.azurecontainerapps.io/predict \
   -H "Content-Type: application/json" \
   -d '{"income":8000000,"age":32,"employment_years":4,"loan_amount":12000000,"loan_term":36,"existing_debt":3500000,"credit_history":5,"previous_defaults":0}'
 # 200 + {"risk_probability":...,"decision":"APPROVE","model_version":"...","reasons":[...]}
 
-curl https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io/model/info
+curl https://creditflow-api.proudstone-70150af3.southeastasia.azurecontainerapps.io/model/info
 # {"model_version":"...","model_name":"..."}
 ```
 
@@ -85,7 +85,7 @@ Workers AI chỉ phục vụ GenAI explain — không còn liên quan tới fron
 ### Verify
 
 ```bash
-curl https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io/llm/info
+curl https://creditflow-api.proudstone-70150af3.southeastasia.azurecontainerapps.io/llm/info
 # {"provider":"cloudflare","model":"@cf/meta/llama-3.2-1b-instruct","prompt_version":"...","configured":true}
 ```
 

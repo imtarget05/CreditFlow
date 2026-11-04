@@ -7,6 +7,10 @@ on:
       source_sha:
         required: false
         type: string
+    outputs:
+      api_base:
+        description: Verified Azure Container App endpoint
+        value: ${{ jobs.test-and-deploy.outputs.api_base }}
 
 permissions:
   contents: read
@@ -16,6 +20,8 @@ jobs:
   test-and-deploy:
     name: Test & Deploy to Azure
     runs-on: ubuntu-latest
+    outputs:
+      api_base: ${{ steps.smoke.outputs.api_base }}
     # Deploy gate context.
     #
     # `AZURE_CREDENTIALS` used to be declared as a *step-level* env, and a
@@ -99,6 +105,7 @@ jobs:
           fi
 
       - name: Azure production readiness and API smoke
+        id: smoke
         if: env.AZURE_CREDENTIALS != ''
         env:
           CREDITFLOW_SMOKE_API_KEY: ${{ secrets.CREDITFLOW_API_KEY }}
@@ -108,6 +115,7 @@ jobs:
             --query properties.configuration.ingress.fqdn -o tsv)
           test -n "$fqdn"
           CREDITFLOW_SMOKE_BASE="https://$fqdn" python3 scripts/smoke_production.py
+          echo "api_base=https://$fqdn" >> "$GITHUB_OUTPUT"
 
       - name: Report deploy status
         if: always()

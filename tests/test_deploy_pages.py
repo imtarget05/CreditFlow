@@ -12,7 +12,6 @@ remote backend is reachable or hermetic.
 """
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -30,7 +29,7 @@ REDIRECTS_SRC = FRONTEND_DIR / "public" / "_redirects"
 REDIRECTS_BUILD = FRONTEND_DIR / "dist" / "_redirects"
 DEPLOY_DOCS = ROOT / "docs" / "deployment.md"
 
-AZURE_BASE = "https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io"
+AZURE_BASE = "https://creditflow-api.proudstone-70150af3.southeastasia.azurecontainerapps.io"
 # Money fields follow the API money-unit contract (VND).
 SAMPLE_PAYLOAD = {
     "income": 8000000,
@@ -66,8 +65,8 @@ def test_pages_workflow_uses_azure_as_the_canonical_backend():
     workflow = ROOT / ".github" / "workflows" / "cd.yml"
     content = workflow.read_text(encoding="utf-8")
 
-    assert "API_BASE: https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io" in content
-    assert "VITE_API_BASE: ${{ env.API_BASE }}" in content
+    assert "VITE_API_BASE: ${{ needs.deploy-azure.outputs.api_base }}" in content
+    assert 'test -n "$VITE_API_BASE"' in content
     assert "deploy-backend-render:" not in content
 
 
@@ -78,7 +77,7 @@ def test_creditflow_docs_and_production_checks_only_use_azure_backend():
     # reappear; the mirror plane documented in `render.yaml`
     # (creditflow-api-9z1v.onrender.com) is separate and allowed in the docs.
     assert "creditflow-api-ko2h.onrender.com" not in docs
-    assert "creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io" in smoke
+    assert AZURE_BASE in smoke
 
 
 def test_production_smoke_requires_readiness_not_only_liveness():
@@ -125,7 +124,7 @@ def test_creditflow_keepalive_targets_azure():
     workflow = ROOT / ".github" / "workflows" / "keepalive.yml"
     content = workflow.read_text(encoding="utf-8")
 
-    assert "creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io" in content
+    assert AZURE_BASE in content
     assert "creditflow-api-9z1v.onrender.com" not in content
     assert "schedule:" not in content
 
@@ -207,7 +206,7 @@ def test_pages_build_output_contains_redirects():
             capture_output=True,
             text=True,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         pytest.skip(f"npm run build failed (e.g. node_modules absent): {exc}")
     assert REDIRECTS_BUILD.exists(), (
         f"npm run build did not produce {REDIRECTS_BUILD}"
@@ -226,7 +225,7 @@ def test_pages_build_output_contains_redirects():
 def test_azure_backend_health_endpoint_reachable():
     try:
         resp = requests.get(f"{AZURE_BASE}/health/live", timeout=10)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         pytest.skip(f"Azure backend unreachable: {exc}")
     assert resp.status_code == 200, f"/health/live returned {resp.status_code}"
     body = resp.json()
@@ -245,7 +244,7 @@ def test_azure_backend_predict_endpoint_reachable():
             json=SAMPLE_PAYLOAD,
             timeout=10,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         pytest.skip(f"Azure backend unreachable: {exc}")
     assert resp.status_code == 200, f"/predict returned {resp.status_code}"
     body = resp.json()

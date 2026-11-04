@@ -17,7 +17,7 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE = (os.environ.get("CREDITFLOW_SMOKE_BASE") or "https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io").rstrip("/")
+BASE = (os.environ.get("CREDITFLOW_SMOKE_BASE") or "https://creditflow-api.proudstone-70150af3.southeastasia.azurecontainerapps.io").rstrip("/")
 ORIGIN = os.environ.get("CREDITFLOW_SMOKE_ORIGIN") or "https://imtarget05.github.io"
 API_KEY = os.environ.get("CREDITFLOW_SMOKE_API_KEY") or ""
 READ_ONLY = os.environ.get("CREDITFLOW_SMOKE_READ_ONLY") == "1"

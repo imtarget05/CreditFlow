@@ -20,7 +20,6 @@ env:
   REGISTRY: ghcr.io
   IMAGE_API: ${{ github.repository }}/creditflow-api
   IMAGE_WEB: ${{ github.repository }}/creditflow-web
-  API_BASE: https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io
 
 jobs:
   build-api-image:
@@ -124,8 +123,9 @@ jobs:
       - name: Install + build
         working-directory: frontend
         env:
-          VITE_API_BASE: ${{ env.API_BASE }}
+          VITE_API_BASE: ${{ needs.deploy-azure.outputs.api_base }}
         run: |
+          test -n "$VITE_API_BASE"
           npm ci
           npm run build
 

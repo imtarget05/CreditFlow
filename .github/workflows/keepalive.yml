@@ -14,7 +14,7 @@ jobs:
       - name: Ping creditflow-api (best-effort)
         run: |
           set -euo pipefail
-          URL="https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io/health/live"
+          URL="https://creditflow-api.proudstone-70150af3.southeastasia.azurecontainerapps.io/health/live"
           echo "Pinging $URL"
           STATUS=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 30 "$URL" || echo "000")
           echo "→ HTTP $STATUS"
