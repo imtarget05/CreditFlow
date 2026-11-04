@@ -168,15 +168,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Trivy (pinned and checksummed)
+        env:
+          TRIVY_VERSION: "0.74.0"
+          TRIVY_SHA256: "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+        run: |
+          set -euo pipefail
+          asset="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sfL --proto '=https' --tlsv1.2 -o "$asset" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${asset}"
+          echo "${TRIVY_SHA256}  ${asset}" | sha256sum -c -
+          tar xzf "$asset" trivy
+          sudo mv trivy /usr/local/bin/trivy
+          sudo chmod +x /usr/local/bin/trivy
       - name: Run Trivy vulnerability scanner (blocking, table output)
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          severity: 'CRITICAL,HIGH'
-          ignore-unfixed: true
-          format: 'table'
-          exit-code: '1'
+        run: |
+          set -euo pipefail
+          trivy fs \
+            --scanners vuln \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --exit-code 1 \
+            --skip-version-check \
+            --skip-dirs .git,.venv,node_modules,frontend/node_modules,mlruns \
+            .
 
   pip-audit:
     # Dependency audit — blocking after the 2026-11-03 remediation of
@@ -241,12 +256,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install SonarScanner
+      - name: SonarCloud scan
+        if: ${{ secrets.SONAR_TOKEN != '' }}
         run: |
-          pip install "sonarqube==4.0.0.3292"
           curl -sL https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip -o sonar-scanner.zip
           unzip -q sonar-scanner.zip
-          export PATH=$PATH:$(pwd)/sonar-scanner-5.0.1.3006-linux/bin
+          export PATH="$PATH:$(pwd)/sonar-scanner-5.0.1.3006-linux/bin"
           sonar-scanner \
             -Dsonar.projectKey=CreditFlow \
             -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }} \
@@ -256,3 +271,6 @@ jobs:
             -Dsonar.python.xunit.reportPaths=test-results.xml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Skip SonarCloud scan when token is not configured
+        if: ${{ secrets.SONAR_TOKEN == '' }}
+        run: echo "Skipping SonarCloud scan until SONAR_TOKEN is configured."

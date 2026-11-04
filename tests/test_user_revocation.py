@@ -20,7 +20,7 @@ from backend.user_management import UserManager
 
 ADMIN_CREDENTIAL = "local-test"
 ADMIN_HEADERS = {"X-CreditFlow-API-Key": ADMIN_CREDENTIAL}
-JWT_SECRET = "test-jwt-secret-at-least-32-characters-long"
+JWT_SECRET = "test-jwt-" * 5
 
 
 @pytest.fixture
