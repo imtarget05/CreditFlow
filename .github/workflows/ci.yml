@@ -248,6 +248,9 @@ jobs:
     name: SonarCloud scan
     runs-on: ubuntu-latest
     needs: [test, coverage]
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -257,20 +260,21 @@ jobs:
         with:
           python-version: "3.12"
       - name: SonarCloud scan
-        if: ${{ secrets.SONAR_TOKEN != '' }}
+        if: env.SONAR_TOKEN != ''
         run: |
           curl -sL https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip -o sonar-scanner.zip
           unzip -q sonar-scanner.zip
-          export PATH="$PATH:$(pwd)/sonar-scanner-5.0.1.3006-linux/bin"
+          PATH="$PATH:$PWD/sonar-scanner-5.0.1.3006-linux/bin"
+          export PATH
           sonar-scanner \
             -Dsonar.projectKey=CreditFlow \
-            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }} \
+            -Dsonar.organization="$SONAR_ORGANIZATION" \
             -Dsonar.host.url=https://sonarcloud.io \
-            -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
+            -Dsonar.login="$SONAR_TOKEN" \
             -Dsonar.python.coverage.reportPaths=coverage.xml \
             -Dsonar.python.xunit.reportPaths=test-results.xml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Skip SonarCloud scan when token is not configured
-        if: ${{ secrets.SONAR_TOKEN == '' }}
+        if: env.SONAR_TOKEN == ''
         run: echo "Skipping SonarCloud scan until SONAR_TOKEN is configured."
