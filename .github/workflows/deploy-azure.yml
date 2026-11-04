@@ -72,7 +72,12 @@ jobs:
       - name: Build & Deploy via Azure CLI
         if: env.AZURE_CREDENTIALS != ''
         env:
+          IMAGE_TAG: ${{ inputs.source_sha || github.sha }}
           CREDITFLOW_API_KEY: ${{ secrets.CREDITFLOW_API_KEY }}
+          CREDITFLOW_OIDC_ISSUER: ${{ secrets.CREDITFLOW_OIDC_ISSUER }}
+          CREDITFLOW_OIDC_AUDIENCE: ${{ secrets.CREDITFLOW_OIDC_AUDIENCE }}
+          CREDITFLOW_OIDC_JWKS_URL: ${{ secrets.CREDITFLOW_OIDC_JWKS_URL }}
+          CREDITFLOW_OIDC_ROLE_MAP_JSON: ${{ secrets.CREDITFLOW_OIDC_ROLE_MAP_JSON }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -96,9 +101,13 @@ jobs:
       - name: Azure production readiness and API smoke
         if: env.AZURE_CREDENTIALS != ''
         env:
-          CREDITFLOW_SMOKE_BASE: https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io
           CREDITFLOW_SMOKE_API_KEY: ${{ secrets.CREDITFLOW_API_KEY }}
-        run: python3 scripts/smoke_production.py
+        run: |
+          set -euo pipefail
+          fqdn=$(az containerapp show --name creditflow-api --resource-group rg-portfolio-prod \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          test -n "$fqdn"
+          CREDITFLOW_SMOKE_BASE="https://$fqdn" python3 scripts/smoke_production.py
 
       - name: Report deploy status
         if: always()
