@@ -239,33 +239,27 @@ def _check_range_rules(df: pd.DataFrame) -> list[str]:
     """Kiểm tra các quy tắc range cho từng cột theo SCHEMA."""
     violations: list[str] = []
 
-    if "income" in df.columns:
-        if (df["income"] <= 0).any():
-            violations.append("income: must be > 0")
+    if "income" in df.columns and (df["income"] <= 0).any():
+        violations.append("income: must be > 0")
 
-    if "loan_amount" in df.columns:
-        if (df["loan_amount"] <= 0).any():
-            violations.append("loan_amount: must be > 0")
+    if "loan_amount" in df.columns and (df["loan_amount"] <= 0).any():
+        violations.append("loan_amount: must be > 0")
 
-    if "age" in df.columns:
-        if ((df["age"] < AGE_MIN) | (df["age"] > AGE_MAX)).any():
-            violations.append(f"age: must be in [{AGE_MIN},{AGE_MAX}]")
+    if "age" in df.columns and ((df["age"] < AGE_MIN) | (df["age"] > AGE_MAX)).any():
+        violations.append(f"age: must be in [{AGE_MIN},{AGE_MAX}]")
 
-    if "loan_term" in df.columns:
-        if (df["loan_term"] <= 0).any():
-            violations.append("loan_term: must be > 0")
+    if "loan_term" in df.columns and (df["loan_term"] <= 0).any():
+        violations.append("loan_term: must be > 0")
 
     for col in ("employment_years", "existing_debt", "credit_history", "previous_defaults"):
         if col in df.columns and (df[col] < 0).any():
             violations.append(f"{col}: must be >= 0")
 
-    if "employment_years" in df.columns and "age" in df.columns:
-        if (df["employment_years"] > (df["age"] - 18)).any():
-            violations.append("employment_years: must be <= age - 18")
+    if "employment_years" in df.columns and "age" in df.columns and (df["employment_years"] > (df["age"] - 18)).any():
+        violations.append("employment_years: must be <= age - 18")
 
-    if "credit_history" in df.columns and "age" in df.columns:
-        if (df["credit_history"] > (df["age"] - 18)).any():
-            violations.append("credit_history: must be <= age - 18")
+    if "credit_history" in df.columns and "age" in df.columns and (df["credit_history"] > (df["age"] - 18)).any():
+        violations.append("credit_history: must be <= age - 18")
 
     return violations
 

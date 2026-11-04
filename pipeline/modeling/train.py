@@ -1,17 +1,10 @@
 from __future__ import annotations
 
-from typing import Tuple
-
-import numpy as np
 import pandas as pd
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 
-from pipeline.validation.schemas import CANONICAL_COLUMNS, TARGET_COLUMN
 from pipeline.feature_engineering.features import DERIVED_FEATURES
-
+from pipeline.validation.schemas import CANONICAL_COLUMNS, TARGET_COLUMN
 
 NUMERIC_COLUMNS = list(CANONICAL_COLUMNS) + list(DERIVED_FEATURES)
 
@@ -21,7 +14,7 @@ def stratified_train_val_test_split(
     target: str = TARGET_COLUMN,
     test_size: float = 0.15,
     random_state: int = 42,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series]:
     y = df[target]
     X = df.drop(columns=[target])
 

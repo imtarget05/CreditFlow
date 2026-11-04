@@ -24,9 +24,9 @@ langchain==1.4.0
 langchain-core==1.6.2
 
 # MLflow tracking in scripts/train_models.py (hard dependency — no silent skip).
-# Full tracking verified with mlflow==3.16.0 (experiment creditflow-risk +
-# registered model creditflow-risk).
-mlflow==3.16.0
+# Keep the tracking client at the patched release; verify the training and
+# registry path again before claiming a new end-to-end MLflow run.
+mlflow==3.17.2
 
 # Durable staging: Neon Postgres branch of pipeline/storage/ledger.py.
 psycopg[binary]>=3.1.0

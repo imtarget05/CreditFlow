@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -23,12 +23,11 @@ from pipeline.feature_store.definitions import (
     LOAN_DEFAULTED,
     LOAN_ISSUED,
     FeatureValue,
-    get_feature,
 )
 from pipeline.feature_store.offline_store import LeakageError, OfflineFeatureStore
 from pipeline.feature_store.online_store import OnlineFeatureStore
 
-T0 = datetime(2026, 1, 1)
+T0 = datetime(2026, 1, 1)  # noqa: DTZ001  # store uses naive datetimes internally
 D = timedelta(days=1)
 
 
@@ -167,7 +166,7 @@ def test_entering_future_data_does_not_break_assertion():
     vẫn phải sạch và vẫn pass kiểm tra."""
     s = seed_store()
     at = T0 + 200 * D
-    before = s.materialize_row("u1", at)
+    s.materialize_row("u1", at)
     s.write(fv(LOAN_ISSUED, 5, at + 50 * D))
     s.assert_no_future_data("u1", at)
 
@@ -291,15 +290,14 @@ def test_entities_and_value_count():
 
 
 def test_timezone_aware_as_of_is_normalized():
-    from datetime import timezone as tz
     s = seed_store()
     naive = s.materialize_row("u1", T0 + 100 * D)
-    aware = s.materialize_row("u1", (T0 + 100 * D).replace(tzinfo=tz.utc))
+    aware = s.materialize_row("u1", (T0 + 100 * D).replace(tzinfo=UTC))
     assert naive == aware, "as_of co timezone phai cho ket qua nhu naive-UTC"
 
 
 def test_iso_string_as_of_works():
-    s = seed_store()
+    seed_store()
 
 
 # ==========================================================================

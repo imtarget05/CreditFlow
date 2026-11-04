@@ -28,7 +28,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import joblib
@@ -36,19 +36,18 @@ import numpy as np
 import pandas as pd
 import yaml
 
-ROOT = Path(__file__).resolve().parent          # CreditFlow/
-PROJ = ROOT.parent                              # repo root
+ROOT = Path(__file__).resolve().parent          # CreditFlow repository root
 sys.path.insert(0, str(ROOT))
 
-from pipeline.feature_engineering.features import add_derived_features  # noqa: E402
-from pipeline.modeling.train import stratified_train_val_test_split  # noqa: E402
+from pipeline.feature_engineering.features import add_derived_features
+from pipeline.modeling.train import stratified_train_val_test_split
 
 CFG = yaml.safe_load((ROOT / "gate8a_thresholds.yaml").read_text())
 GATES = CFG["GATES"]
 NEGATIVE_THRESHOLD = CFG["NEGATIVE_THRESHOLD"]
 FN_COST, FP_COST = CFG["FN_COST"], CFG["FP_COST"]
 
-EVIDENCE = PROJ / "docs/evidence/e2e/gate8a-creditflow-model-quality.json"
+EVIDENCE = ROOT / "docs/evidence/e2e/gate8a-creditflow-model-quality.json"
 RESULTS: list[dict] = []
 
 
@@ -125,7 +124,7 @@ def run_gate_cli(m: dict):
         "print('gate decision:','FAIL' if bad else 'PASS');"
         "sys.exit(1 if bad else 0)"
     )
-    return subprocess.run([sys.executable, "-c", src],
+    return subprocess.run([sys.executable, "-c", src], check=False,
                           capture_output=True, text=True)
 # ---------------------------------------------------------------- A1
 print("\n[A1] dataset integrity + leakage guard")
@@ -295,7 +294,7 @@ if DEPTH == 0:
                    GATE8A_THRESHOLD_OVERRIDE=str(NEGATIVE_THRESHOLD),
                    GATE8A_DRYRUN="1", GATE8A_DEPTH="1",
                    GATE8A_EVIDENCE_SUFFIX="-negative-e2e")
-    full_bad = subprocess.run([sys.executable, __file__], cwd=str(ROOT),
+    full_bad = subprocess.run([sys.executable, __file__], check=False, cwd=str(ROOT),
                               capture_output=True, text=True, env=env_bad)
     check("A9b", "FULL harness run fails the build on a deployed bad candidate",
           "PASS" if full_bad.returncode != 0 else "FAIL",
@@ -308,7 +307,7 @@ if DEPTH == 0:
     env_good = dict(os.environ, GATE8A_DRYRUN="1", GATE8A_DEPTH="1",
                     GATE8A_EVIDENCE_SUFFIX="-approved-e2e")
     env_good.pop("GATE8A_THRESHOLD_OVERRIDE", None)
-    full_good = subprocess.run([sys.executable, __file__], cwd=str(ROOT),
+    full_good = subprocess.run([sys.executable, __file__], check=False, cwd=str(ROOT),
                                capture_output=True, text=True, env=env_good)
     check("A9c", "FULL harness run passes the build on the approved candidate",
           "PASS" if full_good.returncode == 0 else "FAIL",
@@ -324,13 +323,13 @@ status = "PASS" if n_pass == len(RESULTS) else "PARTIAL"
 # Commit phai tro ve repo chua CODE (CreditFlow/), khong phai repo cha
 # chua docs/. Neu tro sai repo, evidence se gan mot ma commit ma khong
 # chua mot dong code nao cua gate nay.
-commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
+commit = subprocess.run(["git", "rev-parse", "HEAD"], check=False, cwd=ROOT,
                         capture_output=True, text=True).stdout.strip()
 evidence = {
     "gate": "8A",
     "title": "CreditFlow Model Quality Gate",
     "status": status,
-    "generated_at": datetime.now(timezone.utc).isoformat(),
+    "generated_at": datetime.now(UTC).isoformat(),
     "commit": commit,
     "commit_repo": "CreditFlow (git remote: imtarget05/CreditFlow)",
     "environment": {"python": sys.version.split()[0], "numpy": np.__version__},
@@ -343,9 +342,9 @@ evidence = {
         "approved_threshold": approved_threshold,
     },
     "leakage_guard": {
-        "train_count": int(len(X_train)),
-        "eval_count": int(len(X_test)),
-        "val_count": int(len(X_val)),
+        "train_count": len(X_train),
+        "eval_count": len(X_test),
+        "val_count": len(X_val),
         "train_eval_overlap": overlap,
         "val_eval_overlap": val_overlap,
     },

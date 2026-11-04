@@ -33,7 +33,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
-
 from langgraph.checkpoint.memory import InMemorySaver
 
 from pipeline.agent import checkpointer as checkpointer_module
@@ -62,7 +61,7 @@ class FakeSharedSaver:
         self.setup_calls = 0
 
     @classmethod
-    def from_conn_string(cls, url: str) -> "FakeSharedSaver":
+    def from_conn_string(cls, url: str) -> FakeSharedSaver:
         return cls(url)
 
     def setup(self) -> None:

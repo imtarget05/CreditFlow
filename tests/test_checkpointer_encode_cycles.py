@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 import threading
 import timeit
-from collections import defaultdict
 
 import pytest
 

@@ -116,6 +116,5 @@ def ks_statistic(a: list[float], b: list[float]) -> float:
     worst = 0.0
     for x in xs + ys:
         diff = abs(_ecdf(xs, x) - _ecdf(ys, x))
-        if diff > worst:
-            worst = diff
+        worst = max(worst, diff)
     return worst

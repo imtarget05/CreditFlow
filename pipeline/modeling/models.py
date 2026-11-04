@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from typing import List, Tuple
-
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier
 
 
-def get_model_factory() -> List[Tuple[str, object]]:
-    models: List[Tuple[str, object]] = [
+def get_model_factory() -> list[tuple[str, object]]:
+    models: list[tuple[str, object]] = [
         ("logistic_regression", LogisticRegression(max_iter=1000, random_state=42)),
         ("decision_tree", DecisionTreeClassifier(random_state=42)),
         ("random_forest", RandomForestClassifier(n_estimators=300, random_state=42)),
@@ -20,7 +18,7 @@ def get_model_factory() -> List[Tuple[str, object]]:
     # đúng chỗ này. Khi import được, danh sách model giữ nguyên như cũ.
     try:
         from xgboost import XGBClassifier
-    except Exception as exc:  # ImportError *or* the dlopen/XGBoostError it raises
+    except Exception as exc:  # ImportError *or* the dlopen/XGBoostError it raises  # noqa: BLE001
         import logging
 
         logging.getLogger(__name__).warning(

@@ -16,8 +16,9 @@ offline. Parity khong phai dieu duoc hy vong.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 from pipeline.feature_store.definitions import (
     FEATURE_ORDER,
@@ -30,7 +31,7 @@ from pipeline.feature_store.definitions import (
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class OnlineFeatureStore:
@@ -41,7 +42,7 @@ class OnlineFeatureStore:
     train/serve parity mot cach xac dinh — khong phu thuoc dong ho that.
     """
 
-    def __init__(self, definitions: Iterable[FeatureDefinition] = None,
+    def __init__(self, definitions: Iterable[FeatureDefinition] | None = None,
                  now_fn=None) -> None:
         self.definitions = {d.name: d for d in (definitions or STANDARD_FEATURES)}
         self.order = tuple(self.definitions)
@@ -126,9 +127,8 @@ class OnlineFeatureStore:
         if not candidates:
             return None
         latest = max(candidates, key=lambda v: v.event_time)
-        if dfn.ttl_seconds is not None:
-            if (as_of - latest.event_time).total_seconds() > dfn.ttl_seconds:
-                return None  # het han — tra None, khong tra so cu
+        if dfn.ttl_seconds is not None and (as_of - latest.event_time).total_seconds() > dfn.ttl_seconds:
+            return None  # het han — tra None, khong tra so cu
         return latest
 
     def _visible(self, entity_id: str, as_of: Any) -> list:

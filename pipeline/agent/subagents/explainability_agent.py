@@ -1,4 +1,5 @@
-"""Explainability Sub-Agent – Writing Agent synthesizing credit risk explanations with RAG grounding."""
+#!/usr/bin/env python3
+"""Explainability agent for CreditFlow credit decision engine."""
 
 from __future__ import annotations
 

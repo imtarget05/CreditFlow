@@ -1,8 +1,9 @@
-"""Fraud & Compliance Sub-Agent – Validation Agent verifying fraud signals & credit policies."""
+#!/usr/bin/env python3
+"""Fraud compliance agent for CreditFlow credit decision engine."""
 
 from __future__ import annotations
 
-from pipeline.agent.nodes import fraud_model, policy_engine, fetch_gateways
+from pipeline.agent.nodes import fetch_gateways, fraud_model, policy_engine
 
 
 class FraudComplianceAgent:

@@ -44,15 +44,34 @@ Keep them narrow and deterministic where they own controls:
 | `ExplainabilityAgent` | Explain an already-computed result | Produce guarded, grounded explanation fields | Change decision, risk score, or human approval state |
 | `DisbursementExecutionAgent` | Decision routing, human interrupt, execution stub, audit | Continue only through the configured state graph and authorization checks | Let a conversational agent bypass authorization or human review |
 
-There is no separate free-form conversational agent in the current product.
-The workflow specialists are the domain-fit agents. Any future analyst assistant
-should be a read-only helper over a case and approved policy documents, with no
-approval, threshold, ledger-write, or disbursement tools.
+### Credit Analyst Assistant
+
+`POST /api/work-items/{work_item_id}/assistant` returns a read-only review brief
+for a work item visible to the authenticated user's role/assignment. It reads
+the persisted application, existing model outcome and local policy corpus; it
+has no mutation tools. The response contains recorded case facts, retrieved
+policy excerpts and a reviewer checklist. It never creates an APPROVE/REJECT
+decision, changes thresholds, claims/completes work, or writes to the ledger.
+When a local LLM provider is configured, the existing guarded explanation
+chain can phrase the brief; otherwise a deterministic template is returned.
+Applicant data is marked `CONFIDENTIAL`, so public providers are blocked unless
+the operator explicitly opts in through `CREDITFLOW_ALLOW_EXTERNAL_LLM=1`.
+The JWT login UI is available only when non-production demo login is explicitly
+enabled and demo users/password hashes plus a JWT secret are configured. The
+token is held in browser memory and is not persisted in local storage.
+
+Run the offline assistant fixtures with
+`python scripts/eval_credit_analyst_assistant.py`. To call the optional LLM
+judge on those fixed synthetic cases, add `--llm-judge` and configure the same
+Cloudflare or Azure OpenAI judge secrets described below. The judge assesses
+grounding, completeness, actionability and decision boundaries; its scores do
+not change prompts or credit outcomes.
 
 ## LLM judge protocol
 
-Run `python scripts/eval_explanations.py --llm-judge` only when intentionally
-evaluating the checked-in synthetic fixtures. The default judge provider is
+Run either `python scripts/eval_explanations.py --llm-judge` or
+`python scripts/eval_credit_analyst_assistant.py --llm-judge` only when
+intentionally evaluating the checked-in synthetic fixtures. The default judge provider is
 Cloudflare Workers AI. Its default judge model is
 `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, requested in JSON Mode with a score schema;
 the optional explanation provider may use a different model. To compare a

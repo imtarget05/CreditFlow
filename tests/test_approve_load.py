@@ -7,8 +7,6 @@ without duplicating money movement.
 """
 from __future__ import annotations
 
-import os
-import sqlite3
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -20,15 +18,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.app import app  # noqa: E402
-from pipeline.storage.ledger import init_db  # noqa: E402
-
-from tests.auth_support import (  # noqa: E402
+from backend.app import app
+from pipeline.storage.ledger import init_db, list_disbursements
+from tests.auth_support import (
     API_KEY,
-    API_KEY_HEADER,
     APPROVER_ID,
-    AUTHORITY_ROLE,
     AUTH_HEADERS,
+    AUTHORITY_ROLE,
 )
 
 pytestmark = [pytest.mark.load, pytest.mark.slow]
@@ -65,14 +61,12 @@ def _start_workflow(c: TestClient) -> str:
     return started["thread_id"]
 
 
-def _approve(thread_id: str) -> int:
-    # Each worker builds its own client but shares the process env + ledger DB.
-    with TestClient(app) as c:
-        r = c.post(
-            f"/predict/graph/{thread_id}/approve",
-            json={"action": "approve"},
-            headers=AUTH_HEADERS,
-        )
+def _approve(c: TestClient, thread_id: str) -> int:
+    r = c.post(
+        f"/predict/graph/{thread_id}/approve",
+        json={"action": "approve"},
+        headers=AUTH_HEADERS,
+    )
     return r.status_code
 
 
@@ -87,15 +81,14 @@ def test_concurrent_approves_hold_under_load(tmp_path, monkeypatch):
     assert len(set(thread_ids)) == N_THREADS, "expected distinct workflows"
 
     results: list[int] = []
-    with ThreadPoolExecutor(max_workers=N_THREADS) as pool:
-        futures = [pool.submit(_approve, tid) for tid in thread_ids]
+    with TestClient(app) as c, ThreadPoolExecutor(max_workers=N_THREADS) as pool:
+        futures = [pool.submit(_approve, c, tid) for tid in thread_ids]
         for fut in as_completed(futures):
             results.append(fut.result())
 
     assert all(code == 200 for code in results), f"non-200 statuses: {results!r}"
 
-    with sqlite3.connect(db_path) as conn:
-        count = conn.execute("SELECT COUNT(*) FROM disbursements").fetchone()[0]
+    count = len(list_disbursements())
     assert count == N_THREADS, (
         f"expected {N_THREADS} disbursement rows under concurrent approve, got {count}"
     )

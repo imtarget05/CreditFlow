@@ -7,16 +7,15 @@ Uses plain assert statements so tests work with both:
 
 from __future__ import annotations
 
-import math
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-from pipeline.feature_engineering.features import add_derived_features, DERIVED_FEATURES
+from pipeline.feature_engineering.features import add_derived_features
 from pipeline.modeling.models import get_model_factory
 from pipeline.modeling.train import NUMERIC_COLUMNS, stratified_train_val_test_split
 
@@ -94,7 +93,7 @@ def test_model_factory_returns_four_models():
     # ép có "xgboost" khi chính interpreter import được nó — CI (Linux) vẫn strict.
     try:
         import xgboost  # noqa: F401
-    except Exception:
+    except Exception:  # noqa: BLE001
         assert "xgboost" not in names, "xgboost import failed but factory still exposes it"
     else:
         assert "xgboost" in names, "xgboost importable but factory omitted it"
@@ -125,11 +124,12 @@ def test_stratified_split_shapes():
 
 def test_pipeline_fit_predict_shape():
     df = _prepared_df(n=200, random_state=42)
-    X_train, X_val, X_test, y_train, y_val, y_test = stratified_train_val_test_split(df)
-    name, model = get_model_factory()[0]
+    X_train, _X_val, X_test, y_train, _y_val, _y_test = stratified_train_val_test_split(df)
+    _name, model = get_model_factory()[0]
     from sklearn.compose import ColumnTransformer
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import StandardScaler
+
     from pipeline.modeling.train import NUMERIC_COLUMNS
     pipe = Pipeline([
         ("preprocessor", ColumnTransformer(transformers=[("num", StandardScaler(), NUMERIC_COLUMNS)])),
@@ -142,10 +142,11 @@ def test_pipeline_fit_predict_shape():
 
 def test_no_nan_in_predictions():
     df = _prepared_df(n=200, random_state=42)
-    X_train, X_val, X_test, y_train, y_val, y_test = stratified_train_val_test_split(df)
+    X_train, X_val, _X_test, y_train, _y_val, _y_test = stratified_train_val_test_split(df)
     from sklearn.compose import ColumnTransformer
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import StandardScaler
+
     from pipeline.modeling.train import NUMERIC_COLUMNS
     for name, model in get_model_factory():
         pipe = Pipeline([
@@ -160,6 +161,7 @@ def test_no_nan_in_predictions():
 
 def _production_split():
     from pathlib import Path
+
     from backend.predict_service import load_production_model
 
     root = Path(__file__).resolve().parents[1]
@@ -170,6 +172,7 @@ def _production_split():
 
 def test_production_dataset_has_no_duplicate_or_overlapping_profiles():
     from itertools import combinations
+
     from pipeline.validation.schemas import CANONICAL_COLUMNS
 
     raw, (_, meta), split = _production_split()
@@ -203,8 +206,9 @@ def test_persisted_scaler_fitted_on_train_only():
 def test_production_threshold_and_test_metrics_reproduce():
     import json
     from pathlib import Path
+
+    from pipeline.modeling.evaluate import calculate_confusion_matrix, compute_metrics
     from pipeline.modeling.threshold import find_optimal_threshold
-    from pipeline.modeling.evaluate import compute_metrics, calculate_confusion_matrix
 
     _, (pipe, meta), split = _production_split()
     _, val, test, _, y_val, y_test = split
@@ -221,7 +225,7 @@ def test_production_threshold_and_test_metrics_reproduce():
     assert (tn, fp, fn, tp) == (558, 92, 30, 70)
     root = Path(__file__).resolve().parents[1]
     rows = json.loads((root / "models/production/benchmark_results.json").read_text())
-    winner = sorted(rows, key=lambda row: (row["business_cost"], -row["val_f1"]))[0]
+    winner = min(rows, key=lambda row: (row["business_cost"], -row["val_f1"]))
     assert winner["model"] == meta["model_name"]
     assert winner["best_threshold"] == meta["threshold"]
     reference = json.loads((root / "models/production/reference_stats.json").read_text())

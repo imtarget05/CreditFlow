@@ -16,7 +16,6 @@ from typing import Any
 
 from pipeline.agent.state import CreditState
 
-
 # ---------------------------------------------------------------------------
 # Policy rule definitions
 # ---------------------------------------------------------------------------

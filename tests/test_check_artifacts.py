@@ -84,7 +84,7 @@ def test_manifest_itself_not_hashed(tmp_path):
 def test_script_is_stdlib_only():
     src = CHECK_ARTIFACTS.read_text(encoding="utf-8")
     top = [ln for ln in src.splitlines()
-           if ln.startswith("import ") or ln.startswith("from ")]
+           if ln.startswith(("import ", "from "))]
     stdlib = {"__future__", "argparse", "hashlib", "pathlib"}
     mods = {ln.split()[1].split(".")[0] for ln in top}
     assert mods <= stdlib, mods

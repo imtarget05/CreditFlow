@@ -2,12 +2,9 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -53,13 +50,15 @@ def test_verify_deploy_produces_pass_evidence(tmp_path):
 
     evidence_dir = tmp_path / "evidence"
     evidence_file = evidence_dir / "deploy-check.json"
-    with patch("scripts.verify_deploy.EVIDENCE_DIR", evidence_dir):
-        with patch("scripts.verify_deploy.EVIDENCE_FILE", evidence_file):
-            with patch("scripts.verify_deploy.subprocess.run", side_effect=fake_run):
-                with patch("scripts.verify_deploy.requests.get", side_effect=[health_resp, model_info_resp]):
-                    with patch("scripts.verify_deploy.requests.post", return_value=predict_resp):
-                        with patch("scripts.verify_deploy.time.sleep"):
-                            evidence = main()
+    with (
+        patch("scripts.verify_deploy.EVIDENCE_DIR", evidence_dir),
+        patch("scripts.verify_deploy.EVIDENCE_FILE", evidence_file),
+        patch("scripts.verify_deploy.subprocess.run", side_effect=fake_run),
+        patch("scripts.verify_deploy.requests.get", side_effect=[health_resp, model_info_resp]),
+        patch("scripts.verify_deploy.requests.post", return_value=predict_resp),
+        patch("scripts.verify_deploy.time.sleep"),
+    ):
+        evidence = main()
 
     assert evidence["overall"] == "PASS"
     assert evidence["docker_build"]["returncode"] == 0
@@ -84,10 +83,12 @@ def test_verify_deploy_marks_fail_on_build_error(tmp_path):
 
     evidence_dir = tmp_path / "evidence"
     evidence_file = evidence_dir / "deploy-check.json"
-    with patch("scripts.verify_deploy.EVIDENCE_DIR", evidence_dir):
-        with patch("scripts.verify_deploy.EVIDENCE_FILE", evidence_file):
-            with patch("scripts.verify_deploy.subprocess.run", return_value=build_proc):
-                evidence = main()
+    with (
+        patch("scripts.verify_deploy.EVIDENCE_DIR", evidence_dir),
+        patch("scripts.verify_deploy.EVIDENCE_FILE", evidence_file),
+        patch("scripts.verify_deploy.subprocess.run", return_value=build_proc),
+    ):
+        evidence = main()
 
     assert evidence["overall"] == "FAIL"
     assert evidence["docker_build"]["returncode"] == 1

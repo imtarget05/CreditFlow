@@ -27,7 +27,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pipeline.storage import ledger  # noqa: E402
+from pipeline.storage import ledger
 
 pytestmark = [pytest.mark.race]
 

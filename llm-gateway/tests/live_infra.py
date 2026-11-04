@@ -51,10 +51,9 @@ def require_live_llm() -> None:
     1.5s. Returns None when everything is reachable.
     """
     gateway = _gateway_base()
-    if not probe_upstream(f"{gateway}/health/ready", timeout_s=1.5):
-        if not probe_upstream(f"{gateway}/health", timeout_s=1.5):
-            pytest.skip(f"live gateway unreachable at {gateway} (offline-first CI)")
-            return
+    if not probe_upstream(f"{gateway}/health/ready", timeout_s=1.5) and not probe_upstream(f"{gateway}/health", timeout_s=1.5):
+        pytest.skip(f"live gateway unreachable at {gateway} (offline-first CI)")
+        return
     upstream_models = _lan_upstream_models_url()
     if not probe_upstream(upstream_models, timeout_s=1.5):
         pytest.skip(f"live LAN upstream unreachable at {upstream_models} (offline-first CI)")

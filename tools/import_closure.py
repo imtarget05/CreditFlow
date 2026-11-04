@@ -96,8 +96,7 @@ class Resolver:
                 if self.is_local(module):
                     unresolved.add(module)
                 continue
-            for parent in self.ancestors(module):
-                queue.append(parent)
+            queue.extend(self.ancestors(module))
             is_package = path.name == "__init__.py"
             package = module if is_package else module.rsplit(".", 1)[0]
             if is_package and "." not in module:

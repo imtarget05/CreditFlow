@@ -45,7 +45,7 @@ def compute_reference_stats(df: pd.DataFrame, features: list[str]) -> dict:
     reference bin proportions (needed for discrete features where quantile
     edges collapse and equal-mass no longer holds).
     """
-    stats: dict = {"n_rows": int(len(df)), "features": {}}
+    stats: dict = {"n_rows": len(df), "features": {}}
     for f in features:
         col = pd.to_numeric(df[f], errors="coerce").dropna()
         if col.empty:
@@ -154,7 +154,7 @@ def detect_drift(
     (no reference stats, no overlapping columns, all-NaN values). An empty
     comparison is never reported as ``NO_DRIFT``.
     """
-    n = int(len(recent_df))
+    n = len(recent_df)
     report: dict = {
         "status": INSUFFICIENT_DATA,
         "n_recent": n,

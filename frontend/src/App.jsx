@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import CreditAnalystAssistant from "./CreditAnalystAssistant.jsx";
 
 const PRIMARY_BASE = (import.meta.env.VITE_API_BASE) || "/api";
 const FALLBACK_BASE = "http://localhost:8080";
@@ -6,7 +7,6 @@ const FALLBACK_BASE = "http://localhost:8080";
 const APP_TITLE = "CreditFlow";
 const APP_SUBTITLE = "Sổ chấm rủi ro khoản vay";
 const API_START_HINT = "uvicorn backend.app:app --host 0.0.0.0 --port 8080";
-const HISTORY_KEY = "creditflow-history";
 const HISTORY_MAX = 50;
 
 async function fetchJson(path, options) {
@@ -169,16 +169,6 @@ function recommendation(level, decision) {
   };
 }
 
-function loadHistory() {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
-}
-
 const MODEL_SEEN_KEY = "creditflow-model-seen";
 
 function loadModelSeen() {
@@ -203,7 +193,7 @@ export default function App() {
   const [metrics, setMetrics] = useState(null);
   const [monError, setMonError] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
-  const [history, setHistory] = useState(loadHistory);
+  const [history, setHistory] = useState([]);
   const [updateNote, setUpdateNote] = useState(null);
   const ledgerAuthorized = false;
   const [ledgerApps, setLedgerApps] = useState([]);
@@ -211,14 +201,6 @@ export default function App() {
 
   const apiLabel = PRIMARY_BASE === "/api" ? "proxy dev /api → :8080" : PRIMARY_BASE;
   const online = health?.status === "ok" || health?.status === "ready" || Boolean(health?.model_loaded);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, HISTORY_MAX)));
-    } catch {
-      /* bộ nhớ đầy hoặc bị chặn — lịch sử phiên vẫn dùng được */
-    }
-  }, [history]);
 
   function validate(values) {
     const errs = {};
@@ -313,6 +295,7 @@ export default function App() {
             explanation: gBody.explanation,
             audit_trail: gBody.audit_trail,
             ledger_application_id: gBody.ledger_application_id,
+            possible_duplicate_application_ids: gBody.possible_duplicate_application_ids || [],
             reasons: gBody.reasons && gBody.reasons.length
               ? gBody.reasons
               : (gBody.audit_trail || [])
@@ -462,6 +445,11 @@ export default function App() {
               <div className="subtitle">{APP_SUBTITLE}</div>
             </div>
           </div>
+          {health?.runtime_mode === "showcase" && (
+            <div className="showcase-badge" role="status">
+              DEMO · SYNTHETIC DATA · NO REAL MONEY
+            </div>
+          )}
           <div className={`health ${online ? "ok" : "down"}`} title={online ? `Backend đang hoạt động · ${health.model_version}` : "Backend không khả dụng"}>
             <span className="dot" aria-hidden="true" />
             {online ? health.model_version : "Backend offline"}
@@ -471,6 +459,7 @@ export default function App() {
           {[
             ["predict", "Chấm rủi ro"],
             ["history", "Lịch sử"],
+            ["assistant", "Trợ lý thẩm định"],
             ["ledger", "Sổ cái tín dụng"],
             ["model", "Model đang dùng"],
             ["monitor", "Theo dõi"],
@@ -494,6 +483,12 @@ export default function App() {
         <div className="banner" role="alert">
           <strong>Backend không khả dụng.</strong>{" "}
           Khởi động backend trước, sau đó làm mới trang: <code>{API_START_HINT}</code>
+        </div>
+      )}
+      {health?.runtime_mode === "showcase" && (
+        <div className="showcase-notice" role="note">
+          Môi trường trình diễn: dữ liệu tổng hợp, không gọi core banking/CIC/eKYC,
+          không kết nối broker production và không thực hiện giải ngân thật.
         </div>
       )}
 
@@ -596,6 +591,9 @@ export default function App() {
                     </div>
 
                     <p className="detail-note">{rec.detail}</p>
+                    {result.possible_duplicate_application_ids?.length > 0 && (
+                      <p className="error" role="alert">Có {result.possible_duplicate_application_ids.length} hồ sơ cũ có cùng dữ liệu chấm điểm. Risk cần kiểm tra thủ công; đây chưa phải bằng chứng cùng khách hàng.</p>
+                    )}
 
                     <div className="next-title">Việc cần làm tiếp theo</div>
                     <ul className="checklist">
@@ -678,7 +676,7 @@ export default function App() {
             <div className="sheet-head">
               <div>
                 <h2>Lịch sử chấm</h2>
-                <p>{history.length > 0 ? `${history.length} hồ sơ trong bộ nhớ trình duyệt — bấm một dòng để mở lại.` : "Sổ lưu trên trình duyệt này, tắt máy vẫn còn."}</p>
+                <p>{history.length > 0 ? `${history.length} hồ sơ trong phiên này — bấm một dòng để mở lại.` : "Lịch sử chỉ tồn tại trong phiên này và mất khi tải lại trang."}</p>
               </div>
               {history.length > 0 && (
                 <button type="button" className="ghost danger-ghost" onClick={() => setHistory([])}>Xóa hết</button>
@@ -732,6 +730,8 @@ export default function App() {
             </div>
           </div>
         )}
+
+        <div hidden={tab !== "assistant"}><CreditAnalystAssistant /></div>
 
         {tab === "ledger" && (
           <div className="sheet">

@@ -12,7 +12,6 @@ just status codes).
 from __future__ import annotations
 
 import os
-import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -33,6 +32,10 @@ from backend.security import (
     ensure_authority,
     require_configured_key,
     require_principal,
+)
+from pipeline.storage.ledger import (
+    get_application_by_thread,
+    list_disbursements,
 )
 from tests.auth_support import (
     API_KEY,
@@ -160,13 +163,20 @@ def test_production_without_api_key_refuses_to_start(monkeypatch):
     message = str(exc.value)
     assert "CREDITFLOW_API_KEY" in message and "production" in message
     # ... and the app itself will not come up.
-    with pytest.raises(RuntimeError):
-        with TestClient(app):
-            pass
+    with pytest.raises(RuntimeError), TestClient(app):
+        pass
 
 
 def test_production_with_api_key_starts(monkeypatch):
     monkeypatch.setenv("CREDITFLOW_ENV", "production")
+    monkeypatch.setenv("CREDITFLOW_OIDC_ISSUER", "https://idp.example")
+    monkeypatch.setenv("CREDITFLOW_OIDC_AUDIENCE", "creditflow")
+    monkeypatch.setenv("CREDITFLOW_OIDC_JWKS_URL", "https://idp.example/keys")
+    monkeypatch.setenv("CREDITFLOW_OIDC_ROLE_MAP_JSON", '{"reviewers":"UNDERWRITER_L1"}')
+    monkeypatch.setenv("SACOMBANK_OIDC_ISSUER", "https://idp.example")
+    monkeypatch.setenv("SACOMBANK_OIDC_AUDIENCE", "creditflow")
+    monkeypatch.setenv("SACOMBANK_OIDC_JWKS_URL", "https://idp.example/keys")
+    monkeypatch.setenv("SACOMBANK_OIDC_ROLE_MAP_JSON", '{"reviewers":"UNDERWRITER_L1"}')
     require_configured_key()  # must not raise
     with TestClient(app):
         pass
@@ -321,22 +331,20 @@ def _start_review_workflow(c: TestClient) -> tuple[dict, dict]:
     pytest.fail(f"no candidate profile produced a REVIEW workflow; last: {last}")
 
 
-def _disbursement_count(db_path) -> int:
-    with sqlite3.connect(str(db_path)) as conn:
-        return conn.execute("SELECT COUNT(*) FROM disbursements").fetchone()[0]
+def _disbursement_count() -> int:
+    return len(list_disbursements())
 
 
 @pytest.mark.slow
 def test_anonymous_caller_cannot_disburse(authed_client, tmp_path):
     _profile, started = _start_review_workflow(authed_client)
     thread_id = started["thread_id"]
-    db = tmp_path / "ledger_auth.db"
 
     r = authed_client.post(
         APPROVE.format(thread_id=thread_id), json={"action": "approve"}
     )
     assert r.status_code == 401, r.text
-    assert _disbursement_count(db) == 0, "an anonymous approval must never disburse"
+    assert _disbursement_count() == 0, "an anonymous approval must never disburse"
     # Still pending: the workflow is untouched, not half-approved.
     from pipeline.storage.ledger import get_application_by_thread
 
@@ -349,7 +357,6 @@ def test_insufficient_authority_is_403_and_writes_no_disbursement(
 ):
     _profile, started = _start_review_workflow(authed_client)
     thread_id = started["thread_id"]
-    db = tmp_path / "ledger_auth.db"
 
     # 120M VND routes to the Risk Committee level of the authority matrix.
     state = authed_client.get(f"/predict/graph/{thread_id}", headers=AUTH_HEADERS).json()
@@ -363,7 +370,7 @@ def test_insufficient_authority_is_403_and_writes_no_disbursement(
     )
     assert r.status_code == 403, r.text
     assert "INSUFFICIENT_AUTHORITY" in r.json()["detail"]
-    assert _disbursement_count(db) == 0, "a refused approval must write no disbursement"
+    assert _disbursement_count() == 0, "a refused approval must write no disbursement"
 
     from pipeline.storage.ledger import get_application_by_thread
 
@@ -374,7 +381,6 @@ def test_insufficient_authority_is_403_and_writes_no_disbursement(
 def test_authorised_approval_records_the_authenticated_approver(authed_client, tmp_path):
     profile, started = _start_review_workflow(authed_client)
     thread_id = started["thread_id"]
-    db = tmp_path / "ledger_auth.db"
 
     r = authed_client.post(
         APPROVE.format(thread_id=thread_id),
@@ -386,14 +392,10 @@ def test_authorised_approval_records_the_authenticated_approver(authed_client, t
     assert body["ledger_status"] == "APPROVED"
     assert body["disbursement"] is not None
     assert body["disbursement"]["loan_amount"] == profile["loan_amount"]
-    assert _disbursement_count(db) == 1
+    assert _disbursement_count() == 1
 
-    with sqlite3.connect(str(db)) as conn:
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT approver_id FROM loan_applications WHERE thread_id = ?", (thread_id,)
-        ).fetchone()
-    assert row["approver_id"] == APPROVER_ID, (
+    app_row = get_application_by_thread(thread_id)
+    assert app_row["approver_id"] == APPROVER_ID, (
         "approver_id must come from the authenticated key, not the request body"
     )
 

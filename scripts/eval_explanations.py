@@ -9,8 +9,8 @@ Offline (no key) it exercises the template arm only.
 """
 from __future__ import annotations
 
-import json
 import argparse
+import json
 import os
 import sys
 import time
@@ -20,7 +20,6 @@ from statistics import median
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pipeline.agent.explanations import generate_explanation
-
 
 LOW_RISK = {"income": 5000000, "age": 35, "employment_years": 10, "loan_amount": 20000000, "loan_term": 36, "existing_debt": 3000000, "credit_history": 8, "previous_defaults": 0}
 
@@ -184,9 +183,10 @@ def run_llm_judge(
 def _log_eval_mlflow(out: dict) -> None:
     """Log eval results to MLflow experiment creditflow-risk (graceful)."""
     try:
-        import mlflow
         import os
-    except Exception:
+
+        import mlflow
+    except Exception:  # noqa: BLE001
         print("[mlflow] not available, skipping eval log")
         return
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "").strip()
@@ -219,7 +219,7 @@ if __name__ == "__main__":
     d = Path("models/evaluation")
     d.mkdir(parents=True, exist_ok=True)
     import datetime
-    f = d / f"llm_eval_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
+    f = d / f"llm_eval_{datetime.datetime.now(datetime.UTC).strftime('%Y%m%d-%H%M%S')}.json"
     f.write_text(json.dumps(out, indent=2, ensure_ascii=False))
     print(json.dumps(out, indent=2, ensure_ascii=False), f"\nwrote {f}")
     _log_eval_mlflow(out)

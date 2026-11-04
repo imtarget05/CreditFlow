@@ -37,12 +37,12 @@ def compute_metrics(y_true, y_pred, y_proba=None) -> dict:
     """
     from sklearn.metrics import (
         accuracy_score,
-        precision_score,
-        recall_score,
-        f1_score,
-        roc_auc_score,
         average_precision_score,
         brier_score_loss,
+        f1_score,
+        precision_score,
+        recall_score,
+        roc_auc_score,
         roc_curve,
     )
 
@@ -168,7 +168,7 @@ def threshold_operating_points(
             "default_capture_rate_in_reject": (
                 float(rejected_defaults / total_defaults) if total_defaults else None
             ),
-            "n": int(len(y)),
+            "n": len(y),
         })
     return points
 

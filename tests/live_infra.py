@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import socket
 import urllib.request
+
 import pytest
 
 LIVE_TESTS_ENABLED = os.environ.get("LIVE_TESTS", "").lower() in ("1", "true", "yes")
@@ -18,7 +19,7 @@ def is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
-    except (socket.timeout, OSError):
+    except (TimeoutError, OSError):
         return False
 
 
@@ -27,13 +28,13 @@ def is_http_reachable(url: str, timeout: float = 1.5) -> bool:
         req = urllib.request.Request(url, method="HEAD")
         with urllib.request.urlopen(req, timeout=timeout):
             return True
-    except Exception:
+    except Exception:  # noqa: BLE001
         # Retry with GET in case HEAD is not allowed
         try:
             req = urllib.request.Request(url, method="GET")
             with urllib.request.urlopen(req, timeout=timeout):
                 return True
-        except Exception:
+        except Exception:  # noqa: BLE001
             return False
 
 

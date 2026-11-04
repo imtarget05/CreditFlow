@@ -5,9 +5,8 @@ German-Credit-like fixture. They do NOT touch the production demo model.
 """
 from __future__ import annotations
 
-import sys
 import os
-import json
+import sys
 import tempfile
 from pathlib import Path
 

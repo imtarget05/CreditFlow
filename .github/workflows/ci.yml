@@ -14,6 +14,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint-airflow:
+    name: Airflow DAG lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Ruff
+        run: python -m pip install "ruff==0.17.0"
+      - name: Lint DAGs and DAG tests
+        run: ruff check airflow
+
   test:
     name: Backend — pytest (unit + API + LangGraph workflow)
     runs-on: ubuntu-latest
@@ -44,7 +57,7 @@ jobs:
         # developer's loopback .env.
         env:
           CREDITFLOW_CORS_ORIGINS: ""
-        run: python -m pytest tests/ -q -m "not integration and not slow and not live and not infra" --strict-markers
+        run: python -m pytest tests/ airflow/tests/ -q -m "not integration and not slow and not live and not infra" --strict-markers
 
       # Plan 2026-09-18 safety gates: bundle contract, replay-safe
       # disbursement, simulation-only gateway rejection.
@@ -166,11 +179,9 @@ jobs:
           exit-code: '1'
 
   pip-audit:
-    # Dependency audit — ADVISORY (continue-on-error) until triaged.
-    # The offline dev env means advisories cannot be pre-triaged here, so a
-    # hard gate would fail the build on unactionable findings. Ratchets to
-    # blocking (remove continue-on-error) after triage — see HARD_TEST_REPORT.
-    name: Dependency audit (pip-audit, advisory)
+    # Dependency audit — blocking after the 2026-11-03 remediation of
+    # langgraph-checkpoint-postgres CVE-2026-115883 (3.1.2 -> 3.1.3).
+    name: Dependency audit (pip-audit)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -181,12 +192,11 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Run pip-audit (advisory — see job comment)
-        continue-on-error: true
+      - name: Run pip-audit
         run: |
           python -m pip install --upgrade pip
           pip install pip-audit
-          pip-audit -r requirements.txt
+          pip-audit -r requirements-dev.txt
 
   build-frontend:
     name: Frontend — npm ci + production build
@@ -205,7 +215,10 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Build production bundle
         run: npm run build
@@ -215,4 +228,3 @@ jobs:
           test -f dist/index.html
           test -f dist/_redirects
           echo "dist/ OK: index.html + _redirects present"
-

@@ -18,7 +18,6 @@ from typing import Any
 
 from pipeline.agent.state import CreditState
 
-
 # Each rule: (flag_label, description, weight) — weight ∈ [0, 1]
 # Scores are clipped so the aggregate never exceeds 1.0.
 FRAUD_RULES: list[tuple[str, str, float]] = [
@@ -74,7 +73,7 @@ def compute_fraud_flags(data: dict[str, Any]) -> list[str]:
 
 def fraud_score(flags: list[str]) -> float:
     """Aggregate fraud flag weights into a [0, 1] score."""
-    weight_map = dict((label, w) for label, _, w in FRAUD_RULES)
+    weight_map = {label: w for label, _, w in FRAUD_RULES}
     raw = sum(weight_map.get(f, 0.0) for f in flags)
     return min(raw, _MAX_SCORE)
 

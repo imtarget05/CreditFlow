@@ -1,0 +1,167 @@
+{
+  "gate": "8A",
+  "title": "CreditFlow Model Quality Gate",
+  "status": "PASS",
+  "generated_at": "2026-11-03T13:00:42.638214+00:00",
+  "commit": "6fffe4f9aff97062f28d9567a2aaa7707b7fd1b7",
+  "commit_repo": "CreditFlow (git remote: imtarget05/CreditFlow)",
+  "environment": {
+    "python": "3.11.15",
+    "numpy": "2.4.6"
+  },
+  "thresholds_precommitted": {
+    "max_normalized_business_cost": 0.42,
+    "min_default_recall": 0.6,
+    "min_f1": 0.45,
+    "max_regression_vs_baseline": 0.15
+  },
+  "negative_candidate_config": {
+    "threshold": 0.5
+  },
+  "integrity": {
+    "dataset_sha256": "b65728f853cad72e3ce51a639ac96c7f04e935170e79acda637b4e5eec2f5d80",
+    "model_sha256": "119f3b3c9c7f3e0c8260b7955cd0b5ba169edd5545d54e6f9c4cea2b36e48774",
+    "model_version": "logistic_regression_v001",
+    "approved_threshold": 0.2
+  },
+  "leakage_guard": {
+    "train_count": 3500,
+    "eval_count": 750,
+    "val_count": 750,
+    "train_eval_overlap": 0,
+    "val_eval_overlap": 0
+  },
+  "baseline": {
+    "threshold": 0.2,
+    "confusion_matrix": {
+      "tp": 70,
+      "fp": 92,
+      "tn": 558,
+      "fn": 30
+    },
+    "business_cost": 242.0,
+    "normalized_business_cost": 0.3227,
+    "recall_positive": 0.7,
+    "precision_positive": 0.4321,
+    "f1": 0.5344,
+    "accuracy": 0.8373,
+    "n": 750
+  },
+  "negative_candidate": {
+    "threshold": 0.5,
+    "confusion_matrix": {
+      "tp": 33,
+      "fp": 29,
+      "tn": 621,
+      "fn": 67
+    },
+    "business_cost": 364.0,
+    "normalized_business_cost": 0.4853,
+    "recall_positive": 0.33,
+    "precision_positive": 0.5323,
+    "f1": 0.4074,
+    "accuracy": 0.872,
+    "n": 750
+  },
+  "negative_tests": {
+    "creditflow_rejected": true,
+    "ci_exit_nonzero_on_fail": true,
+    "ci_exit_zero_on_approved": true,
+    "full_harness_exit_on_bad_candidate": 1,
+    "full_harness_exit_on_approved": 0
+  },
+  "checks": [
+    {
+      "id": "A1",
+      "description": "eval dataset is byte-identical to the frozen file",
+      "status": "PASS",
+      "detail": "sha256=b65728f853cad72e rows=5000",
+      "oracle_source": "SHA-256 of the eval dataset file"
+    },
+    {
+      "id": "A2",
+      "description": "no train/eval row overlap (data leakage guard)",
+      "status": "PASS",
+      "detail": "train=3500 eval=750 overlap=0 val_cap_eval=0",
+      "oracle_source": "set intersection of split row indices"
+    },
+    {
+      "id": "A3",
+      "description": "approved baseline passes the quality gate",
+      "status": "PASS",
+      "detail": "threshold=0.2 cost=242.0 norm=0.3227 recall=0.7 f1=0.5344",
+      "oracle_source": "pre-committed thresholds in gate8a_thresholds.yaml"
+    },
+    {
+      "id": "A4",
+      "description": "eval set reproduces the approved manifest confusion matrix",
+      "status": "PASS",
+      "detail": "ours={'tp': 70, 'fp': 92, 'tn': 558, 'fn': 30} manifest={'true_positive': 70, 'false_positive': 92, 'true_negative': 558, 'false_negative': 30}",
+      "oracle_source": "comparison against manifest.json written at training time"
+    },
+    {
+      "id": "A5",
+      "description": "eval set reproduces the approved manifest test metrics",
+      "status": "PASS",
+      "detail": "ours recall=0.7 f1=0.5344 | manifest recall=0.7 f1=0.5344",
+      "oracle_source": "recall/f1 comparison against manifest test_metrics"
+    },
+    {
+      "id": "A6",
+      "description": "repeated evaluation is bit-identical",
+      "status": "PASS",
+      "detail": "identical",
+      "oracle_source": "second independent load + inference pass"
+    },
+    {
+      "id": "A7",
+      "description": "known-bad candidate (threshold 0.50) is REJECTED",
+      "status": "PASS",
+      "detail": "norm_cost 0.3227 -> 0.4853, recall 0.7 -> 0.33, accuracy 0.8373 -> 0.872; violations=['normalized_business_cost 0.4853 > 0.42', 'recall_positive 0.33 < 0.6', 'f1 0.4074 < 0.45']",
+      "oracle_source": "pre-committed thresholds applied to a regressed config"
+    },
+    {
+      "id": "A7b",
+      "description": "negative candidate is genuinely worse on business cost",
+      "status": "PASS",
+      "detail": "0.4853 vs 0.3227",
+      "oracle_source": "comparison of normalized cost between baseline and negative"
+    },
+    {
+      "id": "A7c",
+      "description": "accuracy alone would have hidden this regression",
+      "status": "PASS",
+      "detail": "accuracy 0.8373 -> 0.872 (up=True) yet default recall fell 0.7 -> 0.33",
+      "oracle_source": "accuracy vs recall divergence between baseline and negative"
+    },
+    {
+      "id": "A8",
+      "description": "CI exits non-zero when the quality gate fails",
+      "status": "PASS",
+      "detail": "exit=1 stdout=gate decision: FAIL",
+      "oracle_source": "observed process exit code, not an in-process return value"
+    },
+    {
+      "id": "A9",
+      "description": "CI exits zero for the approved candidate",
+      "status": "PASS",
+      "detail": "exit=0 stdout=gate decision: PASS",
+      "oracle_source": "observed process exit code"
+    },
+    {
+      "id": "A9b",
+      "description": "FULL harness run fails the build on a deployed bad candidate",
+      "status": "PASS",
+      "detail": "whole-script exit=1; status line=['5/14 status=PARTIAL (dry run, no evidence written)']",
+      "oracle_source": "exit code of this entire script re-run as a subprocess"
+    },
+    {
+      "id": "A9c",
+      "description": "FULL harness run passes the build on the approved candidate",
+      "status": "PASS",
+      "detail": "whole-script exit=0",
+      "oracle_source": "exit code of this entire script re-run as a subprocess"
+    }
+  ],
+  "key_finding": "Changing ONLY the decision threshold, with the model untouched, moved normalized business cost 0.3227 -> 0.4853 and default recall 0.7 -> 0.33, while accuracy went 0.8373 -> 0.872. An accuracy-only gate would have shipped this regression."
+}

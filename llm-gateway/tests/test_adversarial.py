@@ -17,7 +17,7 @@ from test_gateway import build_client, read_records
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import server  # noqa: E402
+import server
 
 PROJECT = "AdvProj"
 NOMCIC_EMBED_ID = "text-embedding-nomic-embed-text-v1.5"

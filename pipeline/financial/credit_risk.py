@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 from enum import Enum
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 
 class CollateralType(str, Enum):
@@ -47,7 +47,7 @@ MASTER_SCALE_BUCKETS = [
 ]
 
 
-def map_master_scale_rating(pd: float) -> Tuple[str, str]:
+def map_master_scale_rating(pd: float) -> tuple[str, str]:
     """Map probability of default (PD) to Master Rating Scale grade and description."""
     clamped_pd = max(0.0, min(1.0, float(pd)))
     for threshold, grade, desc in MASTER_SCALE_BUCKETS:
@@ -60,7 +60,7 @@ def calculate_lgd(
     collateral_type: str | CollateralType = CollateralType.NONE,
     collateral_value: float = 0.0,
     loan_amount: float = 0.0,
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """Calculate Loss Given Default (LGD) and Loan-to-Value (LTV) ratio.
 
     Returns:
@@ -108,7 +108,7 @@ def calculate_basel_metrics(
     collateral_type: str | CollateralType = CollateralType.NONE,
     collateral_value: float = 0.0,
     committed_undrawn: float = 0.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Compute Basel II/III Credit Risk Metrics (PD, LGD, EAD, EL, RWA, Capital).
 
     Formulae:
@@ -164,7 +164,7 @@ def calculate_risk_based_pricing(
     operating_cost_rate: float = 0.025,   # 2.5%/năm chi phí vận hành
     target_profit_margin: float = 0.030,  # 3.0%/năm biên lợi nhuận mục tiêu
     max_legal_annual_rate: float = 0.20,  # 20.0%/năm trần lãi suất theo Bộ luật Dân sự
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Calculate commercial risk-based interest rate for loan underwriting.
 
     Lãi suất = Chi phí vốn + Vận hành + Bù rủi ro (EL / Loan) + Biên lợi nhuận
@@ -196,7 +196,7 @@ def calculate_max_safe_credit_limit(
     loan_term_months: int = 36,
     annual_interest_rate: float = 0.12,
     max_dsr: float = 0.45,  # Debt Service Ratio: tối đa 45% thu nhập trả nợ
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Calculate maximum safe credit line based on Debt Service Ratio (DSR).
 
     Ensures applicant's total monthly debt payments never exceed max_dsr * income.
@@ -236,7 +236,7 @@ def generate_amortization_schedule(
     annual_rate: float,
     term_months: int,
     method: str = "EMI",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Generate detailed month-by-month repayment schedule.
 
     Methods:
@@ -247,7 +247,7 @@ def generate_amortization_schedule(
     months = max(1, int(term_months))
     monthly_rate = max(0.0, float(annual_rate) / 12.0)
 
-    schedule: List[Dict[str, Any]] = []
+    schedule: list[dict[str, Any]] = []
     balance = principal
 
     if method.upper() == "EMI" and monthly_rate > 0:

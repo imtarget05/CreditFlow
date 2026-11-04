@@ -18,7 +18,7 @@ def test_eval_schema_offline(monkeypatch):
 
 
 def test_probability_metrics_include_ranking_and_calibration():
-    from pipeline.modeling.evaluate import compute_metrics, calibration_bins
+    from pipeline.modeling.evaluate import calibration_bins, compute_metrics
 
     metrics = compute_metrics([0, 0, 1, 1], [0, 0, 1, 1], [0.1, 0.4, 0.6, 0.9])
     assert metrics["roc_auc"] == 1.0

@@ -1,6 +1,7 @@
 """Tests for RBAC per-user authentication and Core Banking Sandbox Gateway."""
 
-import time
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -11,9 +12,20 @@ from backend.security import (
     create_access_token,
     decode_access_token,
     ensure_authority,
+    hash_demo_password,
     require_principal,
 )
 from pipeline.gateways.banking_sandbox import CoreBankingSandboxGateway
+
+
+@pytest.fixture(autouse=True)
+def configured_demo_identity(monkeypatch):
+    monkeypatch.setenv("CREDITFLOW_ENABLE_DEMO_LOGIN", "1")
+    monkeypatch.setenv("CREDITFLOW_JWT_SECRET", "test-only-secret-with-at-least-thirty-two-characters")
+    monkeypatch.setenv("CREDITFLOW_DEMO_USERS_JSON", json.dumps({
+        "underwriter1": {"password_hash": hash_demo_password("Underwriter@123", "test-salt-1"), "role": "UNDERWRITER_L1", "name": "Underwriter L1"},
+        "risk_lead": {"password_hash": hash_demo_password("RiskLead@123", "test-salt-2"), "role": "RISK_COMMITTEE_L2", "name": "Risk Committee Lead L2"},
+    }))
 
 
 @pytest.fixture
@@ -155,3 +167,11 @@ def test_banking_sandbox_transfer_and_signature():
     tampered_payload = dict(result["disbursement"])
     tampered_payload["loan_amount"] = 99999999.0
     assert gw.verify_signature(tampered_payload, result["signature"]) is False
+
+
+def test_banking_sandbox_cannot_settle_in_production(monkeypatch):
+    monkeypatch.setenv("CREDITFLOW_ENV", "production")
+    gw = CoreBankingSandboxGateway()
+    order = gw.create_disbursement_order(1, "HDTD-TEST", 1000000)
+    with pytest.raises(RuntimeError, match="SANDBOX_DISABLED_IN_PRODUCTION"):
+        gw.execute_transfer(order)

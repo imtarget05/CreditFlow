@@ -13,11 +13,11 @@ feature definition viết sai, nó vẫn không thấy được tương lai.
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from pipeline.feature_store.definitions import (
     FEATURE_ORDER,
-    RAW_EVENTS,
     STANDARD_FEATURES,
     WRITABLE_NAMES,
     FeatureDefinition,
@@ -39,7 +39,7 @@ class OfflineFeatureStore:
     thi thay lop nay, giu nguyen hop dong.
     """
 
-    def __init__(self, definitions: Iterable[FeatureDefinition] = None) -> None:
+    def __init__(self, definitions: Iterable[FeatureDefinition] | None = None) -> None:
         self.definitions = {d.name: d for d in (definitions or STANDARD_FEATURES)}
         self.order = tuple(self.definitions)
         # entity_id -> name -> list[FeatureValue] (sap xep theo event_time)
@@ -67,7 +67,7 @@ class OfflineFeatureStore:
 
     # -- tinh toan --------------------------------------------------------
     def materialize(self, entity_id: str, as_of: Any,
-                    only: Iterable[str] = None) -> dict:
+                    only: Iterable[str] | None = None) -> dict:
         """Tinh moi feature cho entity tai thoi diem as_of."""
         as_of = to_utc(as_of)
         names = list(only) if only is not None else list(self.order)

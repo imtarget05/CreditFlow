@@ -22,17 +22,18 @@ Run: python server.py   (PORT, or the deprecated GATEWAY_PORT alias)
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import random
 import re
 import threading
 import time
 import uuid
-import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,8 +41,9 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
-
 from metrics import metrics_registry
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------- config
 
@@ -246,7 +248,7 @@ class TelemetryLog:
     def _open(self):
         if self._fh is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self._fh = open(self.path, "a", encoding="utf-8")
+            self._fh = open(self.path, "a", encoding="utf-8")  # noqa: SIM115  # long-lived telemetry handle, closed in close()
         return self._fh
 
     def _rotate_if_needed(self) -> None:
@@ -273,7 +275,7 @@ class TelemetryLog:
             fh.write(line)
             fh.flush()
         except Exception:
-            pass
+            logger.exception("Failed to write telemetry record")
 
     def close(self) -> None:
         if self._fh is not None:
@@ -501,7 +503,7 @@ def _retry_backoff_s(attempt: int) -> float:
 
 
 def _quota_day() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+    return datetime.now(UTC).date().isoformat()
 
 
 def _estimate_tokens(prompt_chars: int, completion_chars: int = 0) -> int:
@@ -530,7 +532,7 @@ def _quota_add(project: str, tokens: int) -> int:
 def _json_or_none(r: httpx.Response) -> Any:
     try:
         return r.json()
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -550,7 +552,7 @@ def _prompt_stats(body: dict) -> tuple[int, str]:
                 chars = sum(len(str(x)) for x in payload)
             else:
                 chars = len(str(payload or ""))
-    except Exception:
+    except Exception:  # noqa: BLE001
         chars, payload = -1, []
     digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, default=str).encode()).hexdigest()[:16]
     return chars, digest
@@ -564,9 +566,9 @@ def _completion_chars(path: str, data: Any) -> int:
             return len(str((data.get("choices") or [{}])[0].get("message", {}).get("content", "")))
         if path == "embeddings":
             return len(str((data.get("data") or [{}])[0].get("embedding", [])))
-    except Exception:
-        pass
-    return 0
+    except Exception:  # noqa: BLE001
+        metrics.error("Failed to get embedding length", exc_info=True)
+        return 0
 
 
 def _json_response(payload: dict, status_code: int) -> Response:
@@ -605,7 +607,7 @@ async def health(request: Request):
     return {
         "status": "ok" if probe["reachable"] else "degraded",
         "upstream": probe,
-        "time": datetime.now(timezone.utc).isoformat(),
+        "time": datetime.now(UTC).isoformat(),
     }
 
 
@@ -631,20 +633,21 @@ async def admin_stats():
     records_by_project: dict[str, list[dict]] = {}
     total = 0
     try:
-        with open(LOG_PATH, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                    proj = rec.get("project", "unknown")
-                    records_by_project.setdefault(proj, []).append(rec)
-                    total += 1
-                except Exception:
-                    continue
-    except Exception as exc:
+        content = await asyncio.to_thread(LOG_PATH.read_text, encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
         return {"error": f"Failed to parse log: {exc}"}
+    for line in content.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+            proj = rec.get("project", "unknown")
+            records_by_project.setdefault(proj, []).append(rec)
+            total += 1
+        except Exception:
+            logger.exception("Skipping malformed telemetry line")
+            continue
 
     summary: dict[str, Any] = {}
     for proj, recs in records_by_project.items():
@@ -668,7 +671,7 @@ async def admin_stats():
             "models_used": list({r.get("model") for r in recs if r.get("model")}),
         }
 
-    return {"total_requests": total, "projects": summary, "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"total_requests": total, "projects": summary, "timestamp": datetime.now(UTC).isoformat()}
 
 
 
@@ -795,7 +798,7 @@ async def _forward(path: str, req: Request) -> Response:
     raw = await req.body()
     try:
         body = json.loads(raw) if raw else {}
-    except Exception:
+    except Exception:  # noqa: BLE001
         body = {}
     if not isinstance(body, dict):
         body = {}
@@ -808,9 +811,7 @@ async def _forward(path: str, req: Request) -> Response:
     has_image = _detect_image(body.get("messages", [])) if isinstance(body.get("messages"), list) else False
     orig_model = body.get("model", "")
     target_model = resolve_model_alias(orig_model, task=task, has_image=has_image)
-    if isinstance(body.get("model"), str) and orig_model != target_model:
-        body["model"] = target_model
-    elif path == "embeddings" and not body.get("model"):
+    if isinstance(body.get("model"), str) and orig_model != target_model or path == "embeddings" and not body.get("model"):
         body["model"] = target_model
 
     # PII masking (VN phone / CCCD) BEFORE anything leaves the gateway.
@@ -832,7 +833,7 @@ async def _forward(path: str, req: Request) -> Response:
         metrics_registry.inc("llm_requests_total", {"project": project, "status": "429"})
         telemetry.write(
             {
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "project": project,
                 "model": target_model,
                 "requested_model": orig_model,
@@ -875,7 +876,7 @@ async def _forward(path: str, req: Request) -> Response:
                     status = upstream_resp.status_code
                     async for chunk in upstream_resp.aiter_raw():
                         yield chunk
-            except Exception as stream_exc:
+            except Exception as stream_exc:  # noqa: BLE001
                 err = f"stream_error: {stream_exc}"
                 yield f"data: {json.dumps({'error': {'message': str(stream_exc)}})}\n\n".encode()
             finally:
@@ -884,7 +885,7 @@ async def _forward(path: str, req: Request) -> Response:
                 metrics_registry.observe("llm_latency_seconds", lat / 1000.0, {"project": project})
                 telemetry.write(
                     {
-                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "ts": datetime.now(UTC).isoformat(),
                         "project": project,
                         "model": target_model,
                         "requested_model": orig_model,
@@ -964,7 +965,7 @@ async def _forward(path: str, req: Request) -> Response:
 
     telemetry.write(
         {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
             "project": project,
             "model": target_model,
             "requested_model": orig_model,

@@ -11,9 +11,10 @@ trữ và truy vấn theo thời gian — không được biết gì về ngữ 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Callable
+from datetime import UTC, datetime
+from typing import Any
 
 # Timestamp chuẩn: naive-UTC. Có timezone thì cũng chấp nhận, sẽ được chuẩn hoá.
 EventTime = datetime
@@ -22,9 +23,9 @@ EventTime = datetime
 def to_utc(ts: Any) -> EventTime:
     """Chuẩn hoá timestamp về naive-UTC để mọi phép so sánh luôn đúng."""
     if isinstance(ts, str):
-        ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        ts = datetime.fromisoformat(ts)
     if ts.tzinfo is not None:
-        ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
+        ts = ts.astimezone(UTC).replace(tzinfo=None)
     return ts
 
 

@@ -1,25 +1,29 @@
 # 🏦 CreditFlow — ML Credit Risk Decision Engine
 
+> **Interview release:** [five-minute demo, evidence, and production boundaries](docs/INTERVIEW_RELEASE.md) · [portfolio pack](../PORTFOLIO_INTERVIEW.md)
+
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-18-blue.svg)](https://reactjs.org/)
 [![XGBoost](https://img.shields.io/badge/XGBoost-Enabled-blue.svg)](https://xgboost.readthedocs.io/)
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-Enabled-orange.svg)](https://scikit-learn.org/)
-[![MLflow](https://img.shields.io/badge/MLflow-3.16-blue.svg)](https://mlflow.org/)
+[![MLflow](https://img.shields.io/badge/MLflow-3.17.2-blue.svg)](https://mlflow.org/)
 [![Docker](https://img.shields.io/badge/Docker-Supported-blue.svg)](https://www.docker.com/)
-[![Tests](https://img.shields.io/badge/Tests-426%20passing-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-CI%20gated-blue.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**CreditFlow** is a production-grade ML credit risk decision support system tailored for financial lending. Moving beyond simple notebook exercises, this is a fully deployable decision engine with a complete pipeline: **data validation → feature engineering → model training → evaluation → serving → monitoring**.
+**CreditFlow** is a credit risk decision-support prototype with a path toward controlled bank deployment. It covers **data validation → feature engineering → model training → evaluation → serving → monitoring**. The current model uses synthetic data and has not been validated for real lending.
 
 Designed with enterprise requirements in mind, it features tamper-evident audit trails, human-in-the-loop approval workflows, explainability, cryptographic decision snapshots, and rigorous cost-sensitive model selection.
 
-## 🚦 Production status (audited 2026-10-09)
+## 🚦 Deployment status (last external audit 2026-10-09)
+
+**Enterprise transition in progress (2026-11-03):** `CREDITFLOW_ENV=production` now requires OIDC configuration and a machine API key at startup. Human routes accept only IdP-signed bearer tokens; the shared key is reserved for the scheduled monitoring job. The public portfolio frontend remains a synthetic demo and is not an authenticated bank staff portal. No real lending decision or payment rail is approved. Revalidate deployment URLs after these changes; the table below is historical evidence only.
 
 | Component | URL | State |
 |---|---|---|
 | Frontend (GitHub Pages) | https://imtarget05.github.io/CreditFlow/ | Serves the CreditFlow app shell, but the live bundle still targets the Render mirror and business calls are not verified. The revised `cd.yml` will rebuild against Azure after successful CI and Azure gate. `creditflow.pages.dev` serves unrelated content and must not be used. |
-| API (Azure Container Apps) | https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io | `creditflow-api` container app, scale 0-1, /health/live + /health/ready + /model/info verified 2026-10-07 |
+| API (Azure Container Apps) | https://creditflow-api.proudstone-70150af3.southeastasia.azurecontainerapps.io | `creditflow-api` container app, scale 0-1; FQDN rechecked 2026-11-04 (read-only). Business readiness is not verified. |
 | API + Postgres (Render mirror, DB on Neon) | https://creditflow-api-9z1v.onrender.com | Mirror plane from `render.yaml` (Docker web + Neon Postgres via `DATABASE_URL`, set in the Render dashboard), autoDeploy on push |
 
 Owner actions (dashboards — pipeline code is ready):
@@ -37,25 +41,9 @@ Owner actions (dashboards — pipeline code is ready):
   remain locked until a user-authenticated server-side flow is implemented. Do not
   put a shared key in this static frontend.
 
-> **Note — authentication today is one shared API key, not per-user identity.**
-> Every sensitive route (ledger reads, state/audit reads, human approval) is
-> protected by a single shared secret (`CREDITFLOW_API_KEY`, sent in
-> `X-CreditFlow-API-Key`). There is **no user table, no OAuth/OIDC provider and
-> no per-user RBAC**: every caller holding the key presents the same principal,
-> and the approver identity recorded in the audit trail (`approver_id`) is a
-> **deployment-wide configuration value** (`CREDITFLOW_API_KEY_ID`, e.g.
-> `supervisor_on_duty`) — it is never the identity of the individual human who
-> clicked approve. Consequences, stated honestly: an approval cannot be
-> attributed to a specific person, one leaked key gives every holder the same
-> authority, and revoking one user means rotating the key for all of them.
-> This is sufficient for a portfolio demo plane; it is **not** sufficient for a
-> live lending operation. Before a real production go-live the following are
-> required: (1) per-user identities via OIDC/OAuth2 or an internal user
-> directory, with per-session credentials instead of one shared header secret;
-> (2) RBAC mapping an authenticated user to a credit authority level
-> (`UNDERWRITER_L1` / `RISK_COMMITTEE_L2`) instead of a single role configured
-> per deployment; (3) audit records that log the authenticated user id on every
-> approval; (4) per-user revocation and credential rotation.
+> **Current identity boundary:** OIDC token validation and group-to-role mapping are implemented, but no Sacombank IdP, group IDs, session UX, or access review has been connected or accepted. Local demo login requires explicit opt-in and configured hashed users. The bundled model uses synthetic proxy data; production readiness and scoring are blocked until independent model validation and a reviewed release. Production workflow, approval, document upload, and settlement also remain blocked pending bank integrations.
+
+The [enterprise readiness report](docs/qa/ENTERPRISE_READINESS_2026-11-03.md) tracks open release gates; [Sacombank pilot inputs](docs/qa/SACOMBANK_INPUTS_FOR_PILOT.md) lists the process, policy, identity, data and sandbox artifacts needed from bank owners.
 
 ---
 
@@ -101,13 +89,12 @@ graph TD
     K --> L[SHA-256 Ledger Hash]
 ```
 
-> **Note — `execute()` is a disbursement stub (decision support only).**
-> The LangGraph `execute` node (`pipeline/agent/nodes.py`) currently only
-> generates the VietQR payload + loan-agreement document and appends audit
-> entries to the trail. It does **not** perform any real money transfer —
-> CreditFlow is a decision-support system, and the audit message records
-> `disbursement pending — no real transfer executed (stub)` to say so
-> explicitly. Wiring a real payment rail is a separate, future decision.
+> **Note — `execute()` is a synthetic disbursement workflow.**
+> The LangGraph node (`pipeline/agent/nodes.py`) generates VietQR and a loan
+> agreement, then can initiate and approve a **simulated** core-banking transfer
+> when a distinct checker is present. It does not move real money. Production
+> scoring, approval and settlement remain blocked until bank contracts and
+> independent acceptance are in place.
 
 ---
 
@@ -176,49 +163,48 @@ The backend provides a comprehensive REST API for predictions, workflow manageme
 
 ### Core Endpoints
 - `GET /health` - Service health and production model status
-- `POST /predict` - Immediate ML prediction (synchronous)
+- `POST /predict` - Demo ML prediction (synchronous); blocked in production pending model validation
 - `GET /model/info` - Production model metadata and benchmark metrics
 - `GET /metrics` - Runtime metrics and benchmark table
 - `GET /drift` - PSI drift report for monitoring distribution shift
 - `GET /llm/info` - Explanation provider status
 
 ### Workflow & State Management (LangGraph)
-- `POST /predict/graph` - Initiate a full LangGraph decision workflow
-- `POST /predict/graph/{thread_id}/approve` - Human approval (resumes a paused `REVIEW` workflow) — **API key required**
+- `POST /predict/graph` - Initiate a synthetic demo workflow; blocked in production pending bank integration
+- `POST /predict/graph/{thread_id}/approve` - Demo human approval; disabled in production until bank integration is approved
 - `GET /predict/graph/{thread_id}` - Get current workflow state
 - `GET /audit/{application_id}` - Full audit trail for an application
 
 ### Ledger & Records
-- `GET /api/applications` - List all processed loan applications — **API key required**
-- `GET /api/disbursements` - View the core-banking ledger (contracts and hashes) — **API key required**
+- `GET /api/applications` - List processed loan applications — authenticated human role required
+- `GET /api/disbursements` - View the demo ledger — authenticated human role required
+- `GET /api/work-items` - Role-scoped human review queue
+- `POST /api/work-items/{id}/actions` - Claim or complete a task with an idempotency key and reason
+- `POST /api/work-items/reminders/run` - Service-key-only overdue check; writes idempotent internal notification events
+- `GET /api/notifications` - Authenticated in-app overdue reminders following current task ownership
+- `POST /api/work-items/{id}/actions` - Idempotent claim, pilot-manager assign, supplement request/resume, L1-to-Risk escalation and complete; each action records actor and reason
+- `GET /api/applications/{id}/document-checklist` - Flag missing configured document types; content/authenticity still need human review
+- `POST /api/monitoring/check` - Service-key-only scheduled drift check; opens a risk task on detected drift
 
 ### Authentication
-The money-moving and PII endpoints above take one shared secret in the
-`X-CreditFlow-API-Key` header. It comes from the environment only — never
-from the repository — and the app **refuses to start** when
-`CREDITFLOW_ENV=production` and no key is configured.
-
-```bash
-curl -H "X-CreditFlow-API-Key: $CREDITFLOW_API_KEY" \
-  -H "Content-Type: application/json" \
-  -X POST http://localhost:8080/predict/graph/<thread_id>/approve \
-  -d '{"action":"approve"}'
-```
+`CREDITFLOW_ENV=production` requires an IdP-signed OIDC bearer token for human
+routes. The server validates RS256 signatures, issuer, audience, expiry and a
+configured group-to-role map. The API key is accepted only by machine-job
+endpoints such as `/api/monitoring/check`. Local demo password login is disabled
+unless explicitly enabled outside production. The public static frontend has
+no production session flow yet; connect the Sacombank IdP before staff use.
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `CREDITFLOW_API_KEY` | Shared secret for the protected endpoints | none — protected routes answer 401 without it |
-| `CREDITFLOW_API_KEY_ID` | Identity recorded as `approver_id` (never taken from the request body) | `supervisor_on_duty` |
-| `CREDITFLOW_API_KEY_ROLE` | Credit authority of the key: `UNDERWRITER_L1` or `RISK_COMMITTEE_L2` (from the authority matrix) | `UNDERWRITER_L1` |
+| `CREDITFLOW_API_KEY` | Machine-job secret in production; legacy demo auth key outside production | none |
+| `CREDITFLOW_OIDC_ISSUER`, `CREDITFLOW_OIDC_AUDIENCE`, `CREDITFLOW_OIDC_JWKS_URL` | Production IdP contract; JWKS URL must use HTTPS | none; production startup fails |
+| `CREDITFLOW_OIDC_ROLE_MAP_JSON` | IdP group ID → `UNDERWRITER_L1` / `RISK_COMMITTEE_L2` | none; production startup fails |
+| `CREDITFLOW_ENABLE_DEMO_LOGIN`, `CREDITFLOW_DEMO_USERS_JSON`, `CREDITFLOW_JWT_SECRET` | Explicit local demo login with salted password hashes and a 32+ character signing secret | disabled / unset |
+| `CREDITFLOW_ALLOW_ANONYMOUS_DEMO` | Explicit synthetic workflow demo exception, never honored in production | disabled |
+| `CREDITFLOW_PILOT_STAFF_JSON` | Non-production identity-to-role map for manager assignment; assignment is blocked in production pending authority-matrix integration | unset |
+| `CREDITFLOW_WORK_CALENDAR_JSON` | Approved timezone, working weekdays/hours, holidays and SLA hours by task kind; required for automatic due dates | unset; no due date is inferred |
+| `CREDITFLOW_REQUIRED_DOCUMENT_TYPES` | Approved comma-separated document types for a metadata presence check | unset; checklist reports `UNCONFIGURED` |
 | `CREDITFLOW_CORS_ORIGINS` | Comma-separated CORS allow-list; a wildcard is refused | `http://localhost:5173,http://localhost:8080` |
-
-An approval is recorded against the authority the workflow itself demanded:
-a `RISK_COMMITTEE_L2` application cannot be approved with an `UNDERWRITER_L1`
-key (403, no disbursement written).
-
-> **Known limitation:** the key authenticates a *service or team*, not a person
-> — see the shared-API-key note under Production status for what must exist
-> (per-user identity + RBAC) before a real production deployment.
 
 ---
 
@@ -292,6 +278,8 @@ tests only run with `LIVE_TESTS=1`.
 ## 📦 Data & Reproducibility
 
 The system was trained on a **5,000-row synthetic proxy dataset** (seed `42`, ~12% default rate). The data generation process is entirely deterministic and reproducible, ensuring honest positioning (acting as a proxy, not real proprietary bank data) while allowing full end-to-end pipeline validation.
+
+For hands-on app testing, use the separate [14-case synthetic VND fixture](data/demo/README.md). It includes valid profiles and deliberate 422 errors, with a localhost-only runner; the training CSV uses a different money scale.
 
 ---
 
@@ -382,3 +370,41 @@ process — it is not server configuration:
   alongside the model artifact (`pipeline.joblib`) — use
   `scripts/check_artifacts.py --build --dir models/production` to refresh the SHA-256 manifest.
 
+---
+
+## 🎤 Interview Release (2 phút)
+
+Mục đích: portfolio có bằng chứng, dễ demo, trung thực — không mở rộng tính năng mới.
+
+### 1. Bài toán kinh doanh
+Hỗ trợ quyết định tín dụng bán lẻ (scoring + REVIEW band + maker-checker disbursement) trên dữ liệu **synthetic** (5k dòng, seed 42). Không phải hệ thống lending thật, không dùng cho quyết định tín dụng thật.
+
+### 2. Kiến trúc chính
+FastAPI + LangGraph 12-node state machine + SQLite/PostgreSQL ledger + React frontend. ML: Logistic Regression (chọn theo business cost, không phải accuracy). LLM chỉ explain, không decide.
+
+### 3. Bạn trực tiếp implement gì?
+- Mock OIDC IdP (RS256 JWT, JWKS, discovery, group→role mapping) — `scripts/mock_oidc_idp.py`
+- Encrypted PostgreSQL storage (pgcrypto, fail-closed nếu không có key) — `pipeline/storage/encryption.py`, `pipeline/storage/ledger.py`
+- Model validation pipeline (temporal backtest, ECE calibration, subgroup analysis) — `scripts/model_validation.py`
+- Idempotent maker-checker approval, tamper-evident SHA-256 ledger hash — `backend/app.py`
+- Backup/restore drill (RPO 15p, RTO 4h) — `scripts/backup_restore.py`
+
+### 4. Có test/evidence nào?
+- `python -m pytest tests/ -q` → **621 passed, 3 skipped** (trên PostgreSQL)
+- `ruff check .` → **0 errors**
+- `gate8a_model_quality.py` → **13/13 checks pass**
+- Backup/restore drill test → passed
+- Model validation evidence — `docs/evidence/e2e/model_validation_evidence.json`
+- Chi tiết: `docs/INTERVIEW_RELEASE.md`, `docs/INTERVIEW_EVIDENCE.md`, `DEMO.md`
+
+### 5. Trade-off và giới hạn
+- SQLite ledger là single-writer — đúng cho branch-scale, có ceiling ở core-banking scale.
+- Model dùng synthetic data; scale path: ledger → append-only journal trên Postgres.
+- PSI drift loop là batch, không streaming — intraday drift là blind spot.
+
+### 6. Nếu production thật thì còn thiếu gì?
+- Core banking integration thật (hiện tại là mock adapter).
+- Sacombank OIDC IdP tenant thật (hiện tại là mock IdP local).
+- Legal approval cho real-data usage.
+- Independent Risk/InfoSec review + penetration test.
+- Production deployment verification (AKS private-link, không verify từ local).

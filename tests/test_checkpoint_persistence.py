@@ -16,12 +16,15 @@ construction). Requires the trained production model at models/production/.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+logger = logging.getLogger(__name__)
 
 import pytest
 from fastapi.testclient import TestClient
@@ -76,7 +79,7 @@ def _invoke_until_paused(graph, profile: dict, thread_id: str) -> dict:
         graph.invoke({"customer_data": profile, "request_meta": {}}, config=config)
     except Exception:
         # Interrupt raised when the graph pauses at human_approval.
-        pass
+        logger.exception("Graph paused at human_approval")
     state = graph.get_state(config=config)
     assert state.values.get("approval_required") is True, (
         f"expected a REVIEW (paused) workflow, got: {state.values.get('decision')}"
@@ -96,7 +99,7 @@ def _first_paused_thread(graph, prefix: str) -> dict:
             )
         except Exception:
             # Interrupt raised when the graph pauses at human_approval.
-            pass
+            logger.exception("Graph paused at human_approval")
         state = graph.get_state(config=config)
         if (
             state.values.get("approval_required") is True
@@ -163,9 +166,7 @@ def test_threads_are_isolated_inside_the_checkpoint_file(checkpoint_env):
     assert state_a.values.get("application_id") != state_b.values.get(
         "application_id"
     )
-    assert set(saver.threads()) >= set(
-        [config_a["configurable"]["thread_id"], config_b["configurable"]["thread_id"]]
-    )
+    assert set(saver.threads()) >= {config_a["configurable"]["thread_id"], config_b["configurable"]["thread_id"]}
 
 
 def test_corrupted_checkpoint_file_starts_fresh(checkpoint_env):
@@ -374,7 +375,7 @@ def test_api_approve_works_after_simated_restart_with_mutating_state(
                         [("__start__", {"seq": index})],
                         f"concurrent-task-{index}",
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     return
 
         def watchdog():

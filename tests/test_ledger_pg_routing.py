@@ -21,7 +21,6 @@ import re
 import sqlite3
 
 import psycopg
-import pytest
 
 from pipeline.storage import ledger
 

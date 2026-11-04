@@ -21,33 +21,37 @@ import tempfile
 from pathlib import Path
 
 import joblib
-import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import sklearn
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-import sklearn
 
 from pipeline.data.generate_dataset import write_dataset
+from pipeline.feature_engineering.features import add_derived_features
+from pipeline.modeling.evaluate import calculate_confusion_matrix, compute_metrics
+from pipeline.modeling.models import get_model_factory
+from pipeline.modeling.threshold import (
+    DEFAULT_FN_COST,
+    DEFAULT_FP_COST,
+    find_optimal_threshold,
+)
+from pipeline.modeling.train import NUMERIC_COLUMNS, stratified_train_val_test_split
+from pipeline.monitoring.drift import (
+    compute_prediction_reference,
+    compute_reference_stats,
+)
 from pipeline.validation.schemas import (
-    CANONICAL_COLUMNS,
-    TARGET_COLUMN,
     MONEY_UNIT,
     TRAINING_MONEY_UNIT,
     VND_PER_TRAINING_UNIT,
     validate_dataframe,
 )
-from pipeline.feature_engineering.features import add_derived_features, DERIVED_FEATURES
-from pipeline.modeling.models import get_model_factory
-from pipeline.modeling.train import stratified_train_val_test_split, NUMERIC_COLUMNS
-from pipeline.modeling.evaluate import compute_metrics, calculate_confusion_matrix
-from pipeline.modeling.threshold import find_optimal_threshold, DEFAULT_FN_COST, DEFAULT_FP_COST
-from pipeline.monitoring.drift import compute_reference_stats, compute_prediction_reference
 
 DATASET_PATH = ROOT / "data" / "creditflow_dataset.csv"
 PROD_DIR = ROOT / "models" / "production"
@@ -245,7 +249,7 @@ def train(force_regenerate: bool = False, reason: str = "") -> None:
         "mapping_version": "0.1",  # synthetic generator; real raw->canonical mapping lives in pipeline/data/mapping.yaml
         "dataset_sha256": dataset_sha256,
         "seed": 42,
-        "rows": int(len(df)),
+        "rows": len(df),
         # --- serving contract: feature order + money units + split -----------
         # Serving MUST read these from here instead of hardcoding them, so the
         # artifact is the single source of truth for how inputs are interpreted.
@@ -258,9 +262,9 @@ def train(force_regenerate: bool = False, reason: str = "") -> None:
             "strategy": "stratified train/val/test",
             "test_size": split_test_size,
             "random_state": split_seed,
-            "n_train": int(len(X_train)),
-            "n_val": int(len(X_val)),
-            "n_test": int(len(X_test)),
+            "n_train": len(X_train),
+            "n_val": len(X_val),
+            "n_test": len(X_test),
             "note": "threshold + model selection use validation only; test is reporting only",
         },
     }
@@ -312,7 +316,7 @@ def _log_mlflow(model_name, version, meta, results, best_pipe, artifact_path) ->
     try:
         import mlflow
         import mlflow.sklearn
-    except Exception as exc:  # graceful degradation
+    except Exception as exc:  # graceful degradation  # noqa: BLE001
         sys.stdout.write(f"\n[mlflow] not available, skipping tracking ({exc})\n")
         return
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "").strip()
@@ -353,7 +357,7 @@ def _log_mlflow(model_name, version, meta, results, best_pipe, artifact_path) ->
             mlflow.log_artifact(str(BENCHMARK_CSV))
             mlflow.log_text(json.dumps(meta, indent=2), "meta.json")
             mlflow.sklearn.log_model(best_pipe, name="pipeline")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             sys.stdout.write(f"[mlflow] artifact logging skipped: {exc}\n")
         # Register the production model so the registry answers
         # "which model is currently serving?" (file store registers locally).
@@ -363,7 +367,7 @@ def _log_mlflow(model_name, version, meta, results, best_pipe, artifact_path) ->
                 "creditflow-risk",
             )
             sys.stdout.write(f"[mlflow] registered model version: {mv.version}\n")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             sys.stdout.write(f"[mlflow] model registry skipped: {exc}\n")
     sys.stdout.write("[mlflow] experiment 'creditflow-risk' logged.\n")
 

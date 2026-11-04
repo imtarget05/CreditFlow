@@ -1,6 +1,5 @@
 """Tests for the ledger checkpoint module."""
 
-import json
 import os
 
 from src.creditflow.ledger.format import LedgerEntry
@@ -8,7 +7,7 @@ from src.creditflow.ledger.format import LedgerEntry
 
 def test_checkpoint_save_load():
     """Test saving and loading a checkpoint."""
-    from src.creditflow.ledger.checkpoint import save_checkpoint, load_checkpoint
+    from src.creditflow.ledger.checkpoint import load_checkpoint, save_checkpoint
 
     entry = LedgerEntry(timestamp=1.0, action="test", data={}, checkpoint=True)
     path = "/tmp/test_checkpoint.json"

@@ -13,9 +13,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from pipeline.feature_engineering.features import add_derived_features
-from pipeline.modeling.evaluate import calibration_bins, compute_metrics, threshold_operating_points
-from pipeline.modeling.train import stratified_train_val_test_split
+from pipeline.modeling.evaluate import (
+    calibration_bins,
+    compute_metrics,
+    threshold_operating_points,
+)
 from pipeline.modeling.threshold import DEFAULT_REVIEW_MAX
+from pipeline.modeling.train import stratified_train_val_test_split
 
 
 def build_model_card() -> str:

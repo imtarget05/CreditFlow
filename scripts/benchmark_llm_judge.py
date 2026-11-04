@@ -8,13 +8,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.eval_explanations import LOW_RISK, run_llm_judge
-
 
 EXPLANATIONS = [
     {
@@ -93,7 +92,7 @@ def main() -> None:
 
     checks = [passed for run in runs for passed in run["checks"].values()]
     report = {
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "timestamp_utc": datetime.now(UTC).isoformat(),
         "benchmark_version": "synthetic-contrast-v1",
         "provider": result["judge_provider"],
         "model": result["judge_model"],

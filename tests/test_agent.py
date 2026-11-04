@@ -14,8 +14,8 @@ Architecture discipline (user argument #2):
 """
 from __future__ import annotations
 
-import sys
 import os
+import sys
 
 import pytest
 
@@ -121,8 +121,8 @@ def test_validate_input_rejects_training_scale_money():
 
 def test_policy_and_fraud_use_vnd_as_is():
     """No magnitude heuristic: policy/fraud compare the contract VND values."""
-    from pipeline.agent.policy import evaluate_policy
     from pipeline.agent.fraud import compute_fraud_flags
+    from pipeline.agent.policy import evaluate_policy
 
     # 900,000 VND loan is below the contract floor but must NOT be silently
     # multiplied by 1000 — the ratio rules simply see the given value.
@@ -182,7 +182,7 @@ def test_explanation_deterministic_fallback(monkeypatch):
     ):
         monkeypatch.delenv(var, raising=False)
 
-    from pipeline.agent.explanations import generate_explanation, explanation_to_text
+    from pipeline.agent.explanations import explanation_to_text, generate_explanation
     from pipeline.agent.state import CreditState
 
     state: CreditState = {
@@ -297,7 +297,6 @@ def test_explanation_langchain_provenance(monkeypatch):
         "fraud_score": 0.0,
         "fraud_flags": [],
         "policy_violations": [],
-        "data_classification": "PUBLIC",
     }
     expl = generate_explanation(state)
     assert expl.get("_llm") is True
@@ -480,14 +479,14 @@ def test_graph_endpoint_rejects_training_scale_money(monkeypatch):
 
 def test_decoupled_subagents_direct_execution():
     """Verify each decoupled sub-agent in CreditFlow can run independently."""
-    from pipeline.agent.subagents import (
-        UnderwritingRiskAgent,
-        FraudComplianceAgent,
-        ExplainabilityAgent,
-        DisbursementExecutionAgent,
-    )
-    from pipeline.agent.graph import CreditDecisionOrchestrator
     from backend.predict_service import load_production_model
+    from pipeline.agent.graph import CreditDecisionOrchestrator
+    from pipeline.agent.subagents import (
+        DisbursementExecutionAgent,
+        ExplainabilityAgent,
+        FraudComplianceAgent,
+        UnderwritingRiskAgent,
+    )
 
     pipeline, meta = load_production_model()
     underwriting = UnderwritingRiskAgent(pipeline, meta)

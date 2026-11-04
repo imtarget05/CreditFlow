@@ -32,16 +32,14 @@ def test_ready_reports_checks():
     assert "checkpoint" in body["checks"]
 
 
-def test_production_stays_ready_but_agent_pipeline_is_fail_closed(monkeypatch):
-    """CREDITFLOW_ENV=production must fail the *agent pipeline* closed while
-    the ML scoring path (/health, /health/ready, /predict) stays ready."""
+def test_production_is_unready_until_model_validation(monkeypatch):
+    """The bundled synthetic model and simulated gateways cannot serve bank use."""
     from pipeline.agent.nodes import fetch_gateways
 
     monkeypatch.setenv("CREDITFLOW_ENV", "production")
-    # Readiness is not conflated with the simulation gate.
     r = client.get("/health/ready")
-    assert r.json()["status"] == "ready", r.json()
-    # But simulated gateways refuse to run in production.
+    assert r.status_code == 503, r.json()
+    assert r.json()["checks"]["model"].startswith("not-ready")
     try:
         fetch_gateways({"customer_data": {}, "audit_trail": []})
     except RuntimeError as exc:

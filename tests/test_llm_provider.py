@@ -4,9 +4,7 @@ No real API calls: transport is monkeypatched. CI needs no secrets.
 """
 from __future__ import annotations
 
-
 import pytest
-
 
 CASE_STATE = {
     "data_classification": "PUBLIC",  # synthetic demo data, not real customer PII
@@ -124,7 +122,6 @@ def test_groq_missing_key_falls_back_to_template(monkeypatch):
 
 
 def test_balanced_json_repairs_common_small_model_defects():
-    import json
 
     from pipeline.agent.llm_provider import _balanced_json
 
@@ -181,7 +178,11 @@ def test_grounded_llm_text_is_accepted_with_provenance(monkeypatch):
 def test_fabricated_profile_numbers_fall_back_to_template(monkeypatch):
     import json
 
-    from pipeline.agent.explanations import _build_context, _template_explanation, generate_explanation
+    from pipeline.agent.explanations import (
+        _build_context,
+        _template_explanation,
+        generate_explanation,
+    )
 
     _serve(
         monkeypatch,
@@ -206,7 +207,7 @@ def test_fabricated_profile_numbers_fall_back_to_template(monkeypatch):
 def test_injected_decision_and_risk_score_are_dropped(monkeypatch):
     import json
 
-    import pipeline.agent.explanations as explanations
+    from pipeline.agent import explanations
 
     monkeypatch.setattr(
         explanations,
@@ -236,7 +237,7 @@ def test_injected_decision_and_risk_score_are_dropped(monkeypatch):
 
 
 def test_malformed_llm_output_falls_back(monkeypatch):
-    import pipeline.agent.explanations as explanations
+    from pipeline.agent import explanations
 
     monkeypatch.setattr(explanations, "_try_llm_explanation", lambda ctx: {"summary": ""})
     output = explanations.generate_explanation(dict(CASE_STATE))
@@ -245,8 +246,8 @@ def test_malformed_llm_output_falls_back(monkeypatch):
 
 
 def test_provider_exception_is_contained_and_decision_untouched(monkeypatch):
-    import pipeline.agent.explanations as explanations
     import pipeline.agent.llm_provider as provider
+    from pipeline.agent import explanations
     from pipeline.agent.nodes import explain
 
     monkeypatch.setenv("CREDITFLOW_LLM_PROVIDER", "cloudflare")
@@ -286,8 +287,8 @@ def test_generate_marks_llm_source(monkeypatch):
     monkeypatch.setenv("CREDITFLOW_LLM_PROVIDER", "cloudflare")
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "x")
     monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "y")
-    import pipeline.agent.llm_provider as P
     import pipeline.agent.explanations as E
+    import pipeline.agent.llm_provider as P
     marker = {"summary": "s", "risk_factors": ["r"], "recommendation_note": "n", "confidence": "high", "_llm": True}
     monkeypatch.setattr(P, "try_cloudflare_explain", lambda ctx: marker)
     out = E._try_llm_explanation({"risk_score": 0.9, "data_classification": "PUBLIC"})
@@ -309,8 +310,8 @@ def test_policy_guard_blocks_confidential_data_to_public_cloud(monkeypatch, caps
 
 def test_policy_guard_allow_external_env_opt_in(monkeypatch, capsys):
     """CREDITFLOW_ALLOW_EXTERNAL_LLM=1 is the explicit, documented opt-in."""
-    import pipeline.agent.llm_provider as P
     import pipeline.agent.explanations as E
+    import pipeline.agent.llm_provider as P
 
     marker = {"summary": "s", "risk_factors": ["r"], "recommendation_note": "n", "confidence": "high", "_llm": True}
     monkeypatch.setenv("CREDITFLOW_LLM_PROVIDER", "groq")
@@ -322,8 +323,9 @@ def test_policy_guard_allow_external_env_opt_in(monkeypatch, capsys):
 
 def test_provider_timeout_uses_template_without_changing_decision(monkeypatch):
     from copy import deepcopy
-    import pipeline.agent.explanations as explanations
+
     import pipeline.agent.llm_provider as provider
+    from pipeline.agent import explanations
 
     monkeypatch.setenv("CREDITFLOW_LLM_PROVIDER", "cloudflare")
     monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "test")
