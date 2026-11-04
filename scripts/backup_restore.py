@@ -74,8 +74,8 @@ def backup() -> None:
 
 def restore(dump_file: str) -> None:
     url = _require_env()
-    dump_path = Path(dump_file)
-    if not dump_path.exists():
+    dump_path = Path(dump_file).resolve()
+    if not dump_path.is_file():
         sys.stderr.write(f"dump file not found: {dump_file}\n")
         sys.exit(1)
 

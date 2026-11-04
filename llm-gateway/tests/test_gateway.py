@@ -19,7 +19,7 @@ REQUIRED_FIELDS = {
     "usage", "status", "error",
 }
 
-SECRET = "TOP-SECRET-PROMPT-CONTENT-9f3a2b"
+SECRET = "demo-prompt-content"
 
 
 # ---------------------------------------------------------------- fake upstream

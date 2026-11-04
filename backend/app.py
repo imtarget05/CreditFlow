@@ -906,8 +906,8 @@ def approve_graph_workflow(
     except Exception as exc:  # noqa: BLE001
         try:
             update_application_status(thread_id, STATUS_PENDING_REVIEW)
-        except Exception:  # noqa: BLE001
-            metrics.error("Failed to update status", exc_info=True)
+        except Exception:
+            logger.exception("Failed to update status")
         metrics.error()
         raise HTTPException(status_code=502, detail=f"GRAPH_RESUME_FAILED: {exc}")
 

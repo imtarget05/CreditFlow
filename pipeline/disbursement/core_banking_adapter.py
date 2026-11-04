@@ -196,7 +196,7 @@ class CoreBankingAdapter:
     ) -> None:
         self.default_maker_id = default_maker_id
         self.sandbox = sandbox or SandboxConfig()
-        self._rng = rng or (lambda: secrets.SystemRandom().random())
+        self._rng = rng or (lambda: secrets.randbelow(1_000_000_000) / 1_000_000_000)
         self._lock = threading.RLock()
         self._db_path = Path(db_path) if db_path is not None else None
         # In-memory store (used when no db_path; kept as a read cache too)
