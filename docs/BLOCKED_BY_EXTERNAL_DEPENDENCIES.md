@@ -4,6 +4,6 @@ The owner has an authenticated GitHub account, Cloudflare OAuth session and the 
 
 CreditFlow has synthetic cases and a mock OIDC IdP for demos. These cannot replace bank IdP configuration, approved data/model, core banking integration, Risk/InfoSec/IAM/business sign-off or UAT. A previous Azure deploy stopped before deployment because required IdP variables were absent; the last observed ACA revision used an unpinned `:latest` image.
 
-QuanLyKho has green CI at `d5caf99` but the production Modal app predates that SHA. Migration `034`, the 21 cloud MVP journeys, device/offline checks and backup/rollback need an isolated recoverable target before acceptance.
+QuanLyKho has green CI at `18bd344` but the production Modal app predates that SHA. Migration `034`, the 21 cloud MVP journeys, device/offline checks and backup/rollback need an isolated recoverable target before acceptance.
 
-All three external SonarCloud quality gates remain red. The next release checkpoint must record one source SHA, image digest/frontend revision, sanitized UTC logs, cloud environment, expected/actual result and rollback target for each PASS. Keep go-live decisions separate from the portfolio score.
+All three external SonarCloud quality gates passed on the candidate SHAs recorded in [CI evidence](CI_EVIDENCE.md). The next release checkpoint must record one source SHA, image digest/frontend revision, sanitized UTC logs, cloud environment, expected/actual result and rollback target for each PASS. Keep go-live decisions separate from the portfolio score.
