@@ -70,7 +70,7 @@ jobs:
           PY
 
       - name: Log in to Azure (using AZURE_CREDENTIALS secret)
-        uses: azure/login@v2
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         if: env.AZURE_CREDENTIALS != ''
         with:
           creds: ${{ env.AZURE_CREDENTIALS }}
