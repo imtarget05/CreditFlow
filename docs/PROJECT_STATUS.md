@@ -15,3 +15,51 @@ A green internal job named “SonarCloud scan” does not prove a scan ran when 
 The later [CI run on `c3d51db`](https://github.com/imtarget05/CreditFlow/actions/runs/41853409578) correctly failed the new Sonar token validation. The credential exposed in chat must be replaced through SonarCloud and GitHub Secrets before this branch can have a fully green internal scanner job. The earlier `b5b69ea` run remains the verified green candidate for code checks; no cloud CreditFlow control is accepted yet.
 
 The signed-in GitHub, Cloudflare and Azure accounts establish owner access. They do not establish Risk, InfoSec, IAM or business approval for real credit data. Synthetic fixtures in `data/demo/app_cases.json` support demos only. Keep production use of real applicant data OPEN until bank-owned controls have named approvers and evidence.
+
+---
+
+## Appendix: Cloud deployment completion plan (`.kilo/plans/1793770000000-cloud-deploy-completion.md`)
+
+Status: **sẵn sàng thực hiện, chờ chủ tài khoản tự thực hiện các bước cần credential.**
+
+| Bước | Công việc | Nơi thực hiện | Trạng thái | Ghi chú |
+|------|-----------|---------------|------------|---------|
+| T1 | Push branch + tag `v1.0.0-interview` lên 3 repo | Máy local (`gh CLI`) | ⏳ Chờ user | Cần `gh auth login` |
+| T2 | Thêm GitHub Secrets (SONAR_TOKEN, CLOUDFLARE_API_TOKEN, RENDER_API_KEY, SONAR_ORGANIZATION) | GitHub Repo Settings → Secrets | ⏳ Chờ user | Chủ tài khoản tự thêm, không qua AI |
+| T3 | Chạy lại CI/Sonar workflows, verify xanh | GitHub Actions | ⏳ Chờ user | Sau khi T2 xong |
+| T4 | Deploy Cloudflare Pages (`apps/sre-console`) | Máy local (`wrangler`) | ⏳ Chờ user | Cần `CLOUDFLARE_API_TOKEN` |
+| T5 | Deploy Render (`app/sre-demo-api`) | Render Dashboard | ⏳ Chờ user | Connect GitHub repo, đọc `render.yaml` |
+| T6 | Cập nhật file này sau khi T3–T5 xong | `CreditFlow/docs/PROJECT_STATUS.md` | ⏳ Chờ user | Chỉ sau khi T3–T5 xong |
+
+### Out-of-scope (không làm trong plan này)
+- **Azure AKS terraform apply:** bị chặn bởi `constraint.no_azure_production_mutations`. Cần infra team mở quyền tenant/cluster/Private Link.
+- **Production go-live claim:** bị chặn bởi 5 P0 gates mở (`no_go_live_while_p0_gates_open`).
+
+### Lệnh T1 (chạy trên máy bạn)
+
+```bash
+cd /Users/mainguyenbinhtan/Downloads/CreditFlow
+git push origin codex/portfolio-cloud-evidence-20261104
+git push origin v1.0.0-interview
+
+cd /Users/mainguyenbinhtan/Downloads/QuanLyKho
+git push origin codex/portfolio-cloud-evidence-20261104
+git push origin v1.0.0-interview
+
+cd /Users/mainguyenbinhtan/Downloads/AKS-SRE-Platform
+git push origin codex/portfolio-cloud-evidence-20261104
+git push origin v1.0.0-interview
+```
+
+### Lệnh T4 (chạy trên máy bạn, sau khi đã có token)
+
+```bash
+cd /Users/mainguyenbinhtan/Downloads/AKS-SRE-Platform/apps/sre-console
+export CLOUDFLARE_API_TOKEN="<token của bạn>"
+wrangler pages deploy dist/ --project-name=sre-console
+```
+
+### Ràng buộc cốt lõi
+- Không nhận/sử dụng token qua chat (bảo mật)
+- Không mutate Azure từ local (`no_azure_production_mutations`)
+- Không claim production readiness khi 5 P0 gates còn mở
