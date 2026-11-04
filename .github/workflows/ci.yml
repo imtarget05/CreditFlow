@@ -275,8 +275,9 @@ jobs:
             https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip \
             -o sonar-scanner.zip
           unzip -q sonar-scanner.zip
-          PATH="$PATH:$PWD/sonar-scanner-5.0.1.3006-linux/bin"
-          export PATH
+          export JAVA_HOME="${JAVA_HOME_21_X64:-$JAVA_HOME}"
+          export PATH="$JAVA_HOME/bin:$PWD/sonar-scanner-5.0.1.3006-linux/bin:$PATH"
+          java -version
           sonar-scanner \
             -Dsonar.projectKey=imtarget05_CreditFlow \
             -Dsonar.organization=imtarget05 \
