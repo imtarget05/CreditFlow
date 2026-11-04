@@ -258,8 +258,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Validate SonarCloud token
+        run: |
+          if [ -z "${SONAR_TOKEN:-}" ]; then
+            echo "::error::SONAR_TOKEN is unset or empty. Recreate and configure the GitHub secret before running SonarCloud."
+            exit 1
+          fi
       - name: SonarCloud scan
-        if: env.SONAR_TOKEN != ''
         run: |
           curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
             https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip \
@@ -276,6 +281,3 @@ jobs:
             -Dsonar.python.xunit.reportPaths=test-results.xml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Skip SonarCloud scan when token is not configured
-        if: env.SONAR_TOKEN == ''
-        run: echo "Skipping SonarCloud scan until SONAR_TOKEN is configured."
