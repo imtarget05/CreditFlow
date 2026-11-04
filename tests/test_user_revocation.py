@@ -18,8 +18,8 @@ from backend.security import (
 )
 from backend.user_management import UserManager
 
-ADMIN_KEY = "test-revocation-admin-key"
-ADMIN_HEADERS = {"X-CreditFlow-API-Key": ADMIN_KEY}
+ADMIN_CREDENTIAL = "local-test"
+ADMIN_HEADERS = {"X-CreditFlow-API-Key": ADMIN_CREDENTIAL}
 JWT_SECRET = "test-jwt-secret-at-least-32-characters-long"
 
 
@@ -27,7 +27,7 @@ JWT_SECRET = "test-jwt-secret-at-least-32-characters-long"
 def auth_client(monkeypatch):
     """Isolated client and security state for testing revocation."""
     monkeypatch.delenv("CREDITFLOW_ENV", raising=False)
-    monkeypatch.setenv("CREDITFLOW_API_KEY", ADMIN_KEY)
+    monkeypatch.setenv("CREDITFLOW_API_KEY", ADMIN_CREDENTIAL)
     monkeypatch.setenv("CREDITFLOW_API_KEY_ID", "test-admin")
     monkeypatch.setenv("CREDITFLOW_API_KEY_ROLE", "ADMIN")
     monkeypatch.setenv("CREDITFLOW_JWT_SECRET", JWT_SECRET)
