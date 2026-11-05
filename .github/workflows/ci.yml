@@ -251,6 +251,7 @@ jobs:
           echo "dist/ OK: index.html + _redirects present"
 
   sonar:
+    if: ${{ secrets.SONAR_TOKEN != '' }}
     name: SonarCloud scan
     runs-on: ubuntu-latest
     needs: [test, coverage]
