@@ -17,16 +17,15 @@ HERE = Path(__file__).resolve()
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO))
 
-tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-tmp.close()
-os.environ["CREDITFLOW_LEDGER_DB"] = tmp.name
+with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+    os.environ["CREDITFLOW_LEDGER_DB"] = tmp.name
 
 try:
     from pipeline.storage import ledger as ledger_mod
 
     MODE = "pipeline.storage.ledger"
     IMPORT_OK = True
-except Exception as exc:
+except Exception as exc:  # noqa: BLE001
     ledger_mod = None
     MODE = f"sqlite3 baseline (pipeline.storage.ledger unavailable: {exc})"
     IMPORT_OK = False
@@ -71,7 +70,7 @@ def main():
         else:
             samples = bench_sqlite(500)
             op = "sqlite_baseline"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"SKIP bench_creditflow: {exc}")
         sys.exit(0)
     finally:

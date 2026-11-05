@@ -57,7 +57,7 @@ if "numpy" not in sys.modules:
     except ImportError:
         sys.modules["numpy"] = types.ModuleType("numpy")
 
-from pipeline.modeling.threshold import (  # noqa: E402
+from pipeline.modeling.threshold import (
     DEFAULT_REVIEW_MAX,
     RISK_APPROVE,
     RISK_REJECT,

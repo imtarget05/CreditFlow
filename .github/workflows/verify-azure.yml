@@ -1,0 +1,56 @@
+name: Verify Azure deployment (read only)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/azure-verify]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      EXPECTED_FQDN: creditflow-api.proudstone-70150af3.southeastasia.azurecontainerapps.io
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require Azure credentials
+        run: test -n "$AZURE_CREDENTIALS"
+
+      - name: Log in to Azure
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Locate the existing Container App
+        shell: bash
+        run: |
+          set -euo pipefail
+          fqdn=$(az containerapp show \
+            --name creditflow-api \
+            --resource-group rg-portfolio-prod \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          if [ -z "$fqdn" ]; then
+            echo "::error::Existing creditflow-api has no public FQDN"
+            exit 1
+          fi
+          echo "CREDITFLOW_SMOKE_BASE=https://$fqdn" >> "$GITHUB_ENV"
+          echo "Existing Container App FQDN: $fqdn"
+          if [ "$fqdn" != "$EXPECTED_FQDN" ]; then
+            echo "::warning::FQDN differs from the URL pinned in CD and docs"
+            echo "AZURE_FQDN_MISMATCH=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Smoke the discovered endpoint
+        env:
+          CREDITFLOW_SMOKE_READ_ONLY: "1"
+        run: python3 scripts/smoke_production.py
+
+      - name: Require the published URL to match
+        if: env.AZURE_FQDN_MISMATCH == 'true'
+        run: |
+          echo "::error::Update CD API_BASE and published URLs before restoring traffic"
+          exit 1

@@ -11,8 +11,8 @@ meta.json do scripts/train_models.py ghi ra):
 """
 from __future__ import annotations
 
-import sys
 import os
+import sys
 
 import pytest
 
@@ -111,6 +111,7 @@ def test_unit_contract_validator_flags_only_below_floor_money():
 def test_vnd_api_equivalent_to_direct_training_pipeline(profile):
     import pandas as pd
     from fastapi.testclient import TestClient
+
     from backend.app import app
     from pipeline.feature_engineering.features import add_derived_features
     from pipeline.modeling.threshold import business_decision

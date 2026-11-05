@@ -35,8 +35,14 @@ import os
 import re
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+
+from pipeline.storage.encryption import (
+    encryption_key,
+    ensure_pgcrypto,
+    require_encryption_key,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LEDGER_PATH = ROOT / "data" / "creditflow_ledger.db"
@@ -73,7 +79,7 @@ def _psycopg_connect(url: str):
 
 def _postgres_url() -> str:
     url = os.environ.get("DATABASE_URL", "").strip()
-    if url.startswith("postgresql://") or url.startswith("postgres://"):
+    if url.startswith(("postgresql://", "postgres://")):
         return url
     return ""
 
@@ -208,6 +214,38 @@ def _connect(db_path: Path | None = None) -> sqlite3.Connection | _PostgresConne
     return conn
 
 
+def _encrypt_value(conn, plaintext: str) -> str:
+    """Encrypt ``plaintext`` with pgcrypto on the Postgres path.
+
+    SQLite (demo mode) returns the plaintext unchanged.
+    """
+    if not _is_postgres(conn):
+        return plaintext
+    require_encryption_key()
+    ensure_pgcrypto(conn)
+    key = encryption_key()
+    row = conn.execute(
+        "SELECT pgp_sym_encrypt(%s, %s) AS enc", (plaintext, key)
+    ).fetchone()
+    return row["enc"]
+
+
+def _decrypt_value(conn, ciphertext: str) -> str:
+    """Decrypt ``ciphertext`` with pgcrypto on the Postgres path.
+
+    SQLite (demo mode) returns the ciphertext unchanged.
+    """
+    if not _is_postgres(conn):
+        return ciphertext
+    require_encryption_key()
+    ensure_pgcrypto(conn)
+    key = encryption_key()
+    row = conn.execute(
+        "SELECT pgp_sym_decrypt(%s, %s) AS dec", (ciphertext, key)
+    ).fetchone()
+    return row["dec"]
+
+
 def init_db(db_path: Path | None = None) -> None:
     """Create the ledger tables if they do not exist (idempotent)."""
     with _connect(db_path) as conn:
@@ -225,6 +263,8 @@ def init_db(db_path: Path | None = None) -> None:
                     status IN ('PENDING_REVIEW', 'APPROVED', 'REJECTED')
                 ),
                 audit_trail   TEXT,                    -- JSON blob
+                customer_data_encrypted TEXT,          -- pgcrypto-encrypted customer_data (Postgres only)
+                audit_trail_encrypted   TEXT,          -- pgcrypto-encrypted audit_trail (Postgres only)
                 created_at    TEXT NOT NULL,
                 updated_at    TEXT NOT NULL
             );
@@ -332,6 +372,8 @@ def init_db(db_path: Path | None = None) -> None:
         except _schema_change_errors():
             pass
         for _ddl in (
+            "ALTER TABLE loan_applications ADD COLUMN customer_data_encrypted TEXT",
+            "ALTER TABLE loan_applications ADD COLUMN audit_trail_encrypted TEXT",
             "ALTER TABLE loan_applications ADD COLUMN approver_id TEXT",
             "ALTER TABLE loan_applications ADD COLUMN idempotency_key TEXT",
             "ALTER TABLE disbursements ADD COLUMN idempotency_key TEXT",
@@ -465,7 +507,7 @@ def record_idempotent_approval(
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _to_row(row: sqlite3.Row | None) -> dict | None:
@@ -506,13 +548,18 @@ def record_application(
     now = _now_iso()
     blob = json.dumps(customer_data, ensure_ascii=False)
     trail_blob = json.dumps(audit_trail or [], ensure_ascii=False)
+    encrypted_blob = ""
+    encrypted_trail = ""
     with _write_lock, _connect(db_path) as conn:
+        if _is_postgres(conn):
+            encrypted_blob = _encrypt_value(conn, blob)
+            encrypted_trail = _encrypt_value(conn, trail_blob)
         conn.execute(
             """
             INSERT INTO loan_applications
                 (thread_id, application_id, customer_data, risk_score, risk_level, decision,
-                 status, audit_trail, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 status, audit_trail, customer_data_encrypted, audit_trail_encrypted, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(thread_id) DO UPDATE SET
                 application_id = COALESCE(excluded.application_id, loan_applications.application_id),
                 customer_data  = excluded.customer_data,
@@ -521,9 +568,11 @@ def record_application(
                 decision       = excluded.decision,
                 status         = excluded.status,
                 audit_trail    = excluded.audit_trail,
+                customer_data_encrypted = excluded.customer_data_encrypted,
+                audit_trail_encrypted   = excluded.audit_trail_encrypted,
                 updated_at     = excluded.updated_at
             """,
-            (thread_id, application_id, blob, float(risk_score), risk_level, decision, status, trail_blob, now, now),
+            (thread_id, application_id, blob, float(risk_score), risk_level, decision, status, trail_blob, encrypted_blob, encrypted_trail, now, now),
         )
         row = conn.execute(
             "SELECT id FROM loan_applications WHERE thread_id = ?", (thread_id,)
@@ -534,18 +583,49 @@ def record_application(
 def get_application_by_thread(
     thread_id: str, db_path: Path | None = None
 ) -> dict | None:
-    """Fetch the application row for a workflow thread_id (or None)."""
+    """Fetch the application row for a workflow thread_id (or None).
+
+    On the Postgres path, ``customer_data`` and ``audit_trail`` are decrypted
+    from the ``*_encrypted`` columns (pgcrypto) so callers always see plaintext.
+    """
     with _connect(db_path) as conn:
         row = conn.execute(
             "SELECT * FROM loan_applications WHERE thread_id = ?", (thread_id,)
         ).fetchone()
-    return _to_row(row)
+        if row is None:
+            return None
+        data = _to_row(row)
+        if _is_postgres(conn):
+            _decrypt_application_fields(conn, data)
+    return data
+
+
+def _decrypt_application_fields(conn, data: dict) -> None:
+    """Decrypt ``customer_data`` / ``audit_trail`` from encrypted columns."""
+    if data.get("customer_data_encrypted"):
+        try:
+            data["customer_data"] = json.loads(
+                _decrypt_value(conn, str(data["customer_data_encrypted"]))
+            )
+        except (TypeError, json.JSONDecodeError):
+            pass
+    if data.get("audit_trail_encrypted"):
+        try:
+            data["audit_trail"] = json.loads(
+                _decrypt_value(conn, str(data["audit_trail_encrypted"]))
+            )
+        except (TypeError, json.JSONDecodeError):
+            pass
 
 
 def get_application_by_id(
     app_id: int | str, db_path: Path | None = None
 ) -> dict | None:
-    """Fetch the application row by numeric id, application_id, or thread_id."""
+    """Fetch the application row by numeric id, application_id, or thread_id.
+
+    On the Postgres path, ``customer_data`` / ``audit_trail`` are decrypted
+    from the ``*_encrypted`` columns (pgcrypto).
+    """
     with _connect(db_path) as conn:
         if isinstance(app_id, int) or (isinstance(app_id, str) and str(app_id).isdigit()):
             row = conn.execute(
@@ -557,7 +637,12 @@ def get_application_by_id(
                 "SELECT * FROM loan_applications WHERE application_id = ? OR thread_id = ?",
                 (str(app_id), str(app_id)),
             ).fetchone()
-    return _to_row(row)
+        if row is None:
+            return None
+        data = _to_row(row)
+        if _is_postgres(conn):
+            _decrypt_application_fields(conn, data)
+    return data
 
 
 def update_application_status(
@@ -923,7 +1008,7 @@ def list_recent_inferences(limit: int = 500, db_path: Path | None = None) -> lis
 # ---------------------------------------------------------------------------
 def _next_contract_code(conn: sqlite3.Connection) -> str:
     """Generate HDTD-YYYYMMDD-XXXX where XXXX is the per-day sequence."""
-    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    today = datetime.now(UTC).strftime("%Y%m%d")
     prefix = f"HDTD-{today}-"
     row = conn.execute(
         "SELECT COUNT(*) AS n FROM disbursements WHERE contract_code LIKE ?",

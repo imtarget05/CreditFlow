@@ -15,6 +15,7 @@ Money-unit contract (see pipeline/validation/schemas.py — do NOT re-derive):
 from __future__ import annotations
 
 import json
+import logging
 import math
 from pathlib import Path
 
@@ -22,18 +23,20 @@ import joblib
 import pandas as pd
 import sklearn
 
+from pipeline.feature_engineering.features import add_derived_features
+from pipeline.modeling.threshold import (
+    DEFAULT_APPROVE_MAX,
+    DEFAULT_REVIEW_MAX,
+    business_decision,
+)
+from pipeline.modeling.train import NUMERIC_COLUMNS
 from pipeline.validation.schemas import (
     MONEY_COLUMNS,
     validate_dataframe,
     validate_money_unit_contract,
 )
-from pipeline.feature_engineering.features import add_derived_features
-from pipeline.modeling.train import NUMERIC_COLUMNS
-from pipeline.modeling.threshold import (
-    business_decision,
-    DEFAULT_APPROVE_MAX,
-    DEFAULT_REVIEW_MAX,
-)
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_FILE = ROOT / "models" / "production" / "pipeline.joblib"
@@ -99,7 +102,7 @@ def get_model_artifact_checksum(bundle_dir: Path | None = None) -> str:
             if "artifacts" in m and "pipeline.joblib" in m["artifacts"]:
                 return m["artifacts"]["pipeline.joblib"]
         except Exception:
-            pass
+            logger.exception("Failed to load model")
     if sha256_path.exists():
         for line in sha256_path.read_text().splitlines():
             if "pipeline.joblib" in line:

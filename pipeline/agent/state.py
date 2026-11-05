@@ -11,9 +11,7 @@ demands for schema validation (§5.2) and auditability (§11).
 """
 from __future__ import annotations
 
-from typing import Optional
 from typing_extensions import TypedDict
-
 
 # Decision buckets (mirrors pipeline.modeling.threshold)
 DECISION_APPROVE = "APPROVE"
@@ -115,7 +113,7 @@ class CreditState(TypedDict, total=False):
 
     # --- workflow control ---
     next: str                    # target node for conditional routing
-    error: Optional[str]         # populated on failure paths
+    error: str | None         # populated on failure paths
     workflow_complete: bool      # set True by the terminal audit node
 
     # --- audit trail ---

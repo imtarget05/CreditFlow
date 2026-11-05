@@ -12,12 +12,11 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-
-BANKING_SECRET_KEY = os.environ.get("CREDITFLOW_BANKING_SECRET", "napas247-sandbox-secret-hmac-sha256-key")
 
 
 @dataclass
@@ -35,7 +34,7 @@ class DisbursementOrder:
 
     def __post_init__(self):
         if not self.created_at:
-            self.created_at = datetime.now(timezone.utc).isoformat()
+            self.created_at = datetime.now(UTC).isoformat()
         if not self.transaction_ref:
             ts = int(time.time())
             self.transaction_ref = f"NAPAS_{self.bank_code}_{self.contract_code}_{ts}"
@@ -44,8 +43,8 @@ class DisbursementOrder:
 class CoreBankingSandboxGateway:
     """Enterprise Sandbox Adapter for VietQR / Napas 247 Banking Rail."""
 
-    def __init__(self, secret_key: str = BANKING_SECRET_KEY):
-        self.secret_key = secret_key
+    def __init__(self, secret_key: str | None = None):
+        self.secret_key = secret_key or os.environ.get("CREDITFLOW_BANKING_SECRET") or secrets.token_hex(32)
 
     def create_disbursement_order(
         self,
@@ -82,8 +81,10 @@ class CoreBankingSandboxGateway:
 
     def execute_transfer(self, order: DisbursementOrder) -> dict[str, Any]:
         """Execute settlement and return proof of transfer."""
+        if os.environ.get("CREDITFLOW_ENV", "").strip().lower() == "production":
+            raise RuntimeError("SANDBOX_DISABLED_IN_PRODUCTION")
         order.status = "SETTLED"
-        order.settled_at = datetime.now(timezone.utc).isoformat()
+        order.settled_at = datetime.now(UTC).isoformat()
 
         result_payload = {
             "transaction_ref": order.transaction_ref,

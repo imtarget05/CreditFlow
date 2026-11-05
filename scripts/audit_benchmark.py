@@ -21,7 +21,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from pipeline.feature_engineering.features import add_derived_features
-from pipeline.modeling.evaluate import compute_metrics, calculate_confusion_matrix
+from pipeline.modeling.evaluate import calculate_confusion_matrix, compute_metrics
 from pipeline.modeling.models import get_model_factory
 from pipeline.modeling.threshold import find_optimal_threshold
 from pipeline.modeling.train import NUMERIC_COLUMNS, stratified_train_val_test_split

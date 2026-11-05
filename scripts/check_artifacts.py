@@ -51,8 +51,7 @@ def artifact_files(artifacts_dir: Path, manifest: Path) -> list[Path]:
 def build_manifest(artifacts_dir: Path, manifest: Path) -> dict[str, str]:
     entries = {p.name: sha256_of(p) for p in artifact_files(artifacts_dir, manifest)}
     with open(manifest, "w", encoding="utf-8") as fh:
-        for name in sorted(entries):
-            fh.write(f"{entries[name]}  {name}\n")
+        fh.writelines(f"{entries[name]}  {name}\n" for name in sorted(entries))
     return entries
 
 

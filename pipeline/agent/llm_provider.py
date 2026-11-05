@@ -131,7 +131,7 @@ def _balanced_json(text: str) -> dict:
                 break
     data = json.loads(text[start : end + 1])
     if not isinstance(data, dict):
-        raise ValueError("provider response is not a JSON object")
+        raise TypeError("provider response is not a JSON object")
     if isinstance(data.get("risk_factors"), str):
         data["risk_factors"] = [data["risk_factors"]]
     return data
@@ -170,7 +170,7 @@ def try_cloudflare_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
             },
             timeout=20.0,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     if r.status_code != 200:
         return None
@@ -187,7 +187,7 @@ def try_cloudflare_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
             choices = r.json().get("result", {}).get("choices") or []
             content = (choices[0].get("message", {}).get("content", "") if choices else "") or ""
             data = _balanced_json(content)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     return _normalize_explanation(data, cfg["model"])
 
@@ -216,7 +216,7 @@ def try_groq_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
             },
             timeout=20.0,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     if r.status_code != 200:
         return None
@@ -224,7 +224,7 @@ def try_groq_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
         choices = r.json().get("choices") or []
         content = (choices[0].get("message", {}).get("content", "") if choices else "") or ""
         data = _balanced_json(content)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     return _normalize_explanation(data, cfg["model"])
 
@@ -254,14 +254,14 @@ def try_ollama_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
             },
             timeout=OLLAMA_TIMEOUT,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     if r.status_code != 200:
         return None
     try:
         content = (r.json().get("message") or {}).get("content", "") or ""
         data = _balanced_json(content)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     return _normalize_explanation(data, model)
 
@@ -292,7 +292,7 @@ def try_lmstudio_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
             },
             timeout=LMSTUDIO_TIMEOUT,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     if r.status_code != 200:
         return None
@@ -300,7 +300,7 @@ def try_lmstudio_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
         choices = r.json().get("choices") or []
         content = (choices[0].get("message", {}).get("content", "") if choices else "") or ""
         data = _balanced_json(content)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     return _normalize_explanation(data, model)
 
@@ -324,7 +324,7 @@ def try_local_vllm_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
             },
             timeout=20.0,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
         
     if r.status_code != 200:
@@ -334,7 +334,7 @@ def try_local_vllm_explain(ctx: dict[str, Any]) -> dict[str, Any] | None:
         choices = r.json().get("choices") or []
         content = (choices[0].get("message", {}).get("content", "") if choices else "") or ""
         data = _balanced_json(content)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
         
     return _normalize_explanation(data, model)

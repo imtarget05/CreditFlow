@@ -29,13 +29,25 @@ services:
       - key: CREDITFLOW_API_KEY
         generateValue: true
       # Comma allow-list consumed by backend/security.py:allowed_origins().
-      # Cloudflare Pages is canonical; GitHub Pages kept during transition.
+      # Current canonical frontend origin; change only after a Cloudflare Pages
+      # hostname is verified and the frontend deployment workflow is switched.
       - key: CREDITFLOW_CORS_ORIGINS
         value: https://imtarget05.github.io
       # Neon Postgres connection string — set in the Render dashboard
       # (sync: false, never committed). Without it the app falls back to the
       # local SQLite ledger + file checkpointer (single-process only).
       - key: DATABASE_URL
+        sync: false
+      # Production IdP contract: set these in the Render dashboard or a platform
+      # secret group before enabling the production service. They are required by
+      # backend/security.py:require_oidc_configuration().
+      - key: CREDITFLOW_OIDC_ISSUER
+        sync: false
+      - key: CREDITFLOW_OIDC_AUDIENCE
+        value: creditflow
+      - key: CREDITFLOW_OIDC_JWKS_URL
+        sync: false
+      - key: CREDITFLOW_OIDC_ROLE_MAP_JSON
         sync: false
       # Optional Workers-AI LLM gateway — opt in from the dashboard:
       # set CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN (sync: false) and

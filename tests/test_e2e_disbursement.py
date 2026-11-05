@@ -4,23 +4,21 @@ Flow under test (acceptance scenario):
     Khách nộp đơn (POST /predict/graph)
       -> workflow thẩm định (REVIEW -> pause at human_approval)
       -> chuyên viên duyệt (POST /predict/graph/{thread_id}/approve)
-      -> query DB thấy bản ghi hợp đồng tín dụng (loan_applications APPROVED)
+      -> query ledger thấy bản ghi hợp đồng tín dụng (loan_applications APPROVED)
          và giao dịch giải ngân (disbursements COMPLETED, contract + ledger_hash).
 
 Also covers: the reject path (NO disbursement written) and the two
-evidence endpoints GET /api/applications + GET /api/disbursements.
+evidence endpoints GET /api/applications + GET /api/disbursement_s.
 
-Each test runs against an isolated SQLite ledger via CREDITFLOW_LEDGER_DB
+Each test runs against an isolated ledger via CREDITFLOW_LEDGER_DB
 (resolved per call by pipeline.storage.ledger, so no import-order coupling).
 Requires the trained production model at models/production/.
 """
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
-import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -29,10 +27,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.app import app
-from pipeline.storage.ledger import init_db, ledger_path
+from pipeline.storage.ledger import (
+    get_application_by_thread,
+    init_db,
+    list_disbursements,
+)
 from tests.auth_support import AUTH_HEADERS, configure_auth_env
 
-# NOTE: disbursement SQLite tests are local-only fast. The `slow` marker is
+# NOTE: disbursement tests are local-only fast. The `slow` marker is
 # applied only to tests that spin the full LangGraph + TestClient workflow.
 
 CONTRACT_CODE_RE = re.compile(r"^HDTD-\d{8}-\d{4}$")
@@ -127,22 +129,21 @@ def test_e2e_submit_review_approve_creates_contract_and_disbursement(
     assert disbursement["loan_amount"] == profile["loan_amount"]
     assert len(disbursement["ledger_hash"]) == 64
 
-    # 3. Query DB trực tiếp: thấy hợp đồng tín dụng + giao dịch giải ngân.
-    conn = sqlite3.connect(str(ledger_env))
-    conn.row_factory = sqlite3.Row
-    app_row = conn.execute(
-        "SELECT * FROM loan_applications WHERE thread_id = ?", (thread_id,)
-    ).fetchone()
-    assert app_row is not None, "application row must survive in SQLite"
+    # 3. Query ledger trực tiếp: thấy hợp đồng tín dụng + giao dịch giải ngân.
+    app_row = get_application_by_thread(thread_id)
+    assert app_row is not None, "application row must survive in ledger"
     assert app_row["status"] == "APPROVED"
     assert app_row["decision"] == "APPROVE"
     assert app_row["risk_score"] is not None
-    stored_profile = json.loads(app_row["customer_data"])
+    stored_profile = app_row["customer_data"]
     assert stored_profile["loan_amount"] == profile["loan_amount"]
 
-    dis_row = conn.execute(
-        "SELECT * FROM disbursements WHERE application_id = ?", (app_id,)
-    ).fetchone()
+    disbursements = list_disbursements()
+    dis_row = None
+    for d in disbursements:
+        if d.get("application_id") == app_id:
+            dis_row = d
+            break
     assert dis_row is not None, "disbursement row must be written to the ledger"
     assert CONTRACT_CODE_RE.match(dis_row["contract_code"])
     assert dis_row["loan_amount"] == profile["loan_amount"]
@@ -154,15 +155,14 @@ def test_e2e_submit_review_approve_creates_contract_and_disbursement(
         (
             f"{dis_row['application_id']}|{dis_row['contract_code']}|"
             f"{dis_row['loan_amount']:.2f}|{dis_row['disbursed_at']}"
-        ).encode("utf-8")
+        ).encode()
     ).hexdigest()
     assert dis_row["ledger_hash"] == expected_hash
-    conn.close()
 
 
 @pytest.mark.slow
 def test_e2e_reject_flow_writes_no_disbursement(client, ledger_env):
-    profile, started = _start_review_workflow(client)
+    _profile, started = _start_review_workflow(client)
     thread_id = started["thread_id"]
 
     r = client.post(
@@ -175,18 +175,12 @@ def test_e2e_reject_flow_writes_no_disbursement(client, ledger_env):
     assert body["ledger_status"] == "REJECTED"
     assert body["disbursement"] is None, "a rejected loan must never disburse"
 
-    conn = sqlite3.connect(str(ledger_env))
-    conn.row_factory = sqlite3.Row
-    app_row = conn.execute(
-        "SELECT * FROM loan_applications WHERE thread_id = ?", (thread_id,)
-    ).fetchone()
+    app_row = get_application_by_thread(thread_id)
     assert app_row["status"] == "REJECTED"
-    n = conn.execute(
-        "SELECT COUNT(*) AS n FROM disbursements WHERE application_id = ?",
-        (app_row["id"],),
-    ).fetchone()["n"]
+    n = sum(
+        1 for d in list_disbursements() if d.get("application_id") == app_row["id"]
+    )
     assert n == 0
-    conn.close()
 
 
 @pytest.mark.slow
@@ -251,7 +245,10 @@ def test_ledger_persists_across_process_restart(client, ledger_env):
     )
     assert r.status_code == 200
     assert r.json()["disbursement"] is not None
-    assert ledger_path().exists()
+    # Ledger row survives: re-read and confirm APPROVED.
+    row = get_application_by_thread(thread_id)
+    assert row is not None
+    assert row["status"] == "APPROVED"
 
 
 @pytest.mark.slow

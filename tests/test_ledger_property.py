@@ -23,7 +23,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pipeline.storage import ledger  # noqa: E402
+from pipeline.storage import ledger
 
 pytestmark = [pytest.mark.adversarial]
 
@@ -58,7 +58,7 @@ def test_double_entry_conservation_over_seeded_applications(tmp_path):
         # No negative money movement: stored amount equals the non-negative input.
         assert row["loan_amount"] == amount >= 0, (
             f"case {case}: stored amount {row['loan_amount']} != input {amount}")
-        assert row["hash_valid"] if "hash_valid" in row else True, (
+        assert row.get("hash_valid", True), (
             f"case {case}: fresh disbursement row must verify")
     rows = ledger.list_disbursements(db_path=db)
     assert len(rows) == n, (
@@ -133,7 +133,7 @@ def test_tamper_breaks_hash_but_never_silently(tmp_path):
             else:
                 conn.execute("UPDATE disbursements SET contract_code = contract_code || 'X' "
                              "WHERE contract_code = ?", (row["contract_code"],))
-        reread = [r for r in ledger.list_disbursements(db_path=db)
-                  if r["application_id"] == app_id][0]
+        reread = next(r for r in ledger.list_disbursements(db_path=db)
+                  if r["application_id"] == app_id)
         assert reread["hash_valid"] is False, (
             f"case {case}: edited {col} must be detected (hash_valid False)")

@@ -34,7 +34,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pipeline.validation.schemas import CANONICAL_COLUMNS, TARGET_COLUMN, validate_dataframe  # noqa: E402
+from pipeline.validation.schemas import (
+    CANONICAL_COLUMNS,
+    TARGET_COLUMN,
+    validate_dataframe,
+)
 
 
 def _load_yaml(path: Path) -> dict:
@@ -64,7 +68,7 @@ def _coerce_numeric(series: pd.Series, name: str) -> pd.Series:
     """Best-effort numeric coercion; non-numeric values become NA."""
     try:
         return pd.to_numeric(series, errors="coerce")
-    except Exception:  # pragma: no cover
+    except Exception:  # pragma: no cover  # noqa: BLE001
         return pd.Series(pd.NA, index=series.index, name=name)
 
 
@@ -139,8 +143,8 @@ def ingest(
         "source": cfg["source"],
         "source_name": source_name or str(raw_path),
         "config": str(config_path.relative_to(ROOT)),
-        "rows": int(len(out_df)),
-        "raw_rows": int(len(raw)),
+        "rows": len(out_df),
+        "raw_rows": len(raw),
         "columns": int(out_df.shape[1]),
         "target": TARGET_COLUMN,
         "positive_rate": None if pos_rate is None else round(pos_rate, 4),
@@ -151,7 +155,7 @@ def ingest(
         "unmapped_raw_columns": unmapped_raw,
         "validation_violations": violations,
         "ready_for_training": len(violations) == 0,
-        "ingested_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "ingested_at": _dt.datetime.now(_dt.UTC).isoformat(),
         "processed_path": processed_rel,
     }
     manifest_path.parent.mkdir(parents=True, exist_ok=True)

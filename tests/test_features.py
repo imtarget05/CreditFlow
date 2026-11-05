@@ -6,16 +6,18 @@ Uses plain assert statements so tests work with both:
 """
 
 import math
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-from pipeline.feature_engineering.features import add_derived_features, DERIVED_FEATURES
-from pipeline.validation.schemas import validate_dataframe, CANONICAL_COLUMNS, AGE_MIN, AGE_MAX
+from pipeline.feature_engineering.features import DERIVED_FEATURES, add_derived_features
+from pipeline.validation.schemas import (
+    validate_dataframe,
+)
 
 
 def _base_row(**overrides):
@@ -74,23 +76,23 @@ def test_div_by_zero_loan_amount_zero():
 
 
 def test_age_18_credit_history_year_ratio_denominator():
-    out, flags = add_derived_features(_base_row(age=18, credit_history=5.0))
+    out, _flags = add_derived_features(_base_row(age=18, credit_history=5.0))
     # max(age - 18, 1) = max(0, 1) = 1, but ratio is set to 0.0 when age-18 <= 0
     assert out.loc[0, "credit_history_year_ratio"] == 0.0, "ratio should be 0.0 when age=18"
 
 
 def test_employment_years_exceeds_age_minus_18():
-    out, flags = add_derived_features(_base_row(age=30, employment_years=20.0))
+    _out, flags = add_derived_features(_base_row(age=30, employment_years=20.0))
     assert "employment_years_exceeds_age_minus_18" in flags, "Should flag employment_years_exceeds_age_minus_18"
 
 
 def test_credit_history_exceeds_age_minus_18():
-    out, flags = add_derived_features(_base_row(age=30, credit_history=20.0))
+    _out, flags = add_derived_features(_base_row(age=30, credit_history=20.0))
     assert "credit_history_exceeds_age_minus_18" in flags, "Should flag credit_history_exceeds_age_minus_18"
 
 
 def test_no_inf_in_derived_columns():
-    out, flags = add_derived_features(_base_row(income=0.0, loan_amount=0.0))
+    out, _flags = add_derived_features(_base_row(income=0.0, loan_amount=0.0))
     for c in DERIVED_FEATURES:
         v = out.loc[0, c]
         if isinstance(v, (float, np.floating)):

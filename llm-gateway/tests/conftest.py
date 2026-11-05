@@ -4,8 +4,6 @@ from pathlib import Path
 
 import pytest
 
-import server
-
 REAL_LOG = Path(__file__).resolve().parents[1] / "logs" / "llm-telemetry.jsonl"
 
 

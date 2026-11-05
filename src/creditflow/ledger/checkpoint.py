@@ -7,7 +7,6 @@ Retained because ``tests/creditflow/test_checkpoint.py`` exercises it.
 """
 
 import json
-import os
 from dataclasses import asdict
 from pathlib import Path
 

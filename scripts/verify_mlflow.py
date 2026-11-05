@@ -66,7 +66,7 @@ def main() -> int:
     try:
         vers = client.get_latest_versions(EXPERIMENT)
         print(f"registry={EXPERIMENT} versions={[v.version for v in vers]}")
-    except Exception as exc:  # registry optional on some stores
+    except Exception as exc:  # registry optional on some stores  # noqa: BLE001
         print(f"registry skipped: {exc}")
     print("MLFLOW_VERIFY=OK")
     return 0

@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pipeline.validation.schemas import CANONICAL_COLUMNS, TARGET_COLUMN
+from pipeline.validation.schemas import TARGET_COLUMN
 
 
 def make_credit_dataset(n: int = 5000, random_state: int = 42) -> pd.DataFrame:

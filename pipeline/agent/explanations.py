@@ -23,8 +23,8 @@ from typing import Any
 
 from typing_extensions import TypedDict
 
-from pipeline.agent.state import CreditState
 from pipeline.agent.llm_provider import PROMPT_VERSION
+from pipeline.agent.state import CreditState
 
 
 class ExplanationOutput(TypedDict, total=False):
@@ -141,7 +141,7 @@ def _is_grounded(value: float, allowed: set[float]) -> bool:
     for candidate in allowed:
         if math.isclose(value, candidate, rel_tol=0.0, abs_tol=1e-9):
             return True
-        for places in range(0, 5):
+        for places in range(5):
             if math.isclose(round(candidate, places), value, rel_tol=0.0, abs_tol=1e-9):
                 return True
     return False
@@ -385,7 +385,7 @@ def generate_explanation(state: CreditState) -> ExplanationOutput:
 
     try:
         llm_result = _try_llm_explanation(ctx)
-    except Exception:
+    except Exception:  # noqa: BLE001
         verified["fallback_reason"] = "provider_error"
         return verified
     if llm_result is None:

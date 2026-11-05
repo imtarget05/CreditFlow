@@ -1,0 +1,98 @@
+{
+  "gate": "5",
+  "title": "Independent Model Validation (temporal backtest + calibration + subgroup)",
+  "generated_at": "2026-11-05T05:40:53.479202+00:00",
+  "model_version": "logistic_regression_v001",
+  "model_name": "logistic_regression",
+  "threshold": 0.2,
+  "dataset": "data/creditflow_dataset.csv",
+  "dataset_rows": 5000,
+  "backtest_rows": 1500,
+  "backtest_default_rate": 0.12266666666666666,
+  "metrics": {
+    "business_cost": 460.0,
+    "normalized_business_cost": 0.3067,
+    "recall": 0.712,
+    "precision": 0.4018,
+    "f1": 0.5137,
+    "accuracy": 0.8347,
+    "expected_calibration_error": 0.0155
+  },
+  "confusion_matrix": {
+    "tp": 131,
+    "fp": 195,
+    "tn": 1121,
+    "fn": 53
+  },
+  "subgroups": {
+    "income=low": {
+      "n": 1436,
+      "default_rate": 0.126,
+      "business_cost": 454.0,
+      "normalized_cost": 0.3162,
+      "recall": 0.7127
+    },
+    "income=mid": {
+      "n": 58,
+      "default_rate": 0.0345,
+      "business_cost": 6.0,
+      "normalized_cost": 0.1034,
+      "recall": 0.5
+    },
+    "income=high": {
+      "n": 6,
+      "default_rate": 0.1667,
+      "business_cost": 0.0,
+      "normalized_cost": 0.0,
+      "recall": 1.0
+    },
+    "age=young": {
+      "n": 299,
+      "default_rate": 0.3244,
+      "business_cost": 157.0,
+      "normalized_cost": 0.5251,
+      "recall": 0.9072
+    },
+    "age=mid": {
+      "n": 488,
+      "default_rate": 0.1189,
+      "business_cost": 203.0,
+      "normalized_cost": 0.416,
+      "recall": 0.5172
+    },
+    "age=older": {
+      "n": 713,
+      "default_rate": 0.0407,
+      "business_cost": 100.0,
+      "normalized_cost": 0.1403,
+      "recall": 0.4483
+    },
+    "previous_defaults=none": {
+      "n": 1032,
+      "default_rate": 0.0921,
+      "business_cost": 299.0,
+      "normalized_cost": 0.2897,
+      "recall": 0.6
+    },
+    "previous_defaults=few": {
+      "n": 362,
+      "default_rate": 0.1519,
+      "business_cost": 124.0,
+      "normalized_cost": 0.3425,
+      "recall": 0.7636
+    },
+    "previous_defaults=many": {
+      "n": 106,
+      "default_rate": 0.3208,
+      "business_cost": 37.0,
+      "normalized_cost": 0.3491,
+      "recall": 0.9412
+    }
+  },
+  "gates": {
+    "max_normalized_business_cost": 0.42,
+    "min_default_recall": 0.6,
+    "min_f1": 0.45
+  },
+  "passed": true
+}

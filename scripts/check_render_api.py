@@ -99,7 +99,7 @@ def main():
                 print(f" - {svc.get('name')} ({svc.get('id')}) | {details.get('url', 'N/A')} | {svc.get('suspended')}")
 
     except requests.exceptions.RequestException as e:
-        print(f"Services endpoint status: CONNECTION ERROR")
+        print("Services endpoint status: CONNECTION ERROR")
         print(f"Error message: {e}")
 
 

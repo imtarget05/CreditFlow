@@ -21,33 +21,37 @@ import tempfile
 from pathlib import Path
 
 import joblib
-import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import sklearn
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-import sklearn
 
 from pipeline.data.generate_dataset import write_dataset
+from pipeline.feature_engineering.features import add_derived_features
+from pipeline.modeling.evaluate import calculate_confusion_matrix, compute_metrics
+from pipeline.modeling.models import get_model_factory
+from pipeline.modeling.threshold import (
+    DEFAULT_FN_COST,
+    DEFAULT_FP_COST,
+    find_optimal_threshold,
+)
+from pipeline.modeling.train import NUMERIC_COLUMNS, stratified_train_val_test_split
+from pipeline.monitoring.drift import (
+    compute_prediction_reference,
+    compute_reference_stats,
+)
 from pipeline.validation.schemas import (
-    CANONICAL_COLUMNS,
-    TARGET_COLUMN,
     MONEY_UNIT,
     TRAINING_MONEY_UNIT,
     VND_PER_TRAINING_UNIT,
     validate_dataframe,
 )
-from pipeline.feature_engineering.features import add_derived_features, DERIVED_FEATURES
-from pipeline.modeling.models import get_model_factory
-from pipeline.modeling.train import stratified_train_val_test_split, NUMERIC_COLUMNS
-from pipeline.modeling.evaluate import compute_metrics, calculate_confusion_matrix
-from pipeline.modeling.threshold import find_optimal_threshold, DEFAULT_FN_COST, DEFAULT_FP_COST
-from pipeline.monitoring.drift import compute_reference_stats, compute_prediction_reference
 
 DATASET_PATH = ROOT / "data" / "creditflow_dataset.csv"
 PROD_DIR = ROOT / "models" / "production"
@@ -167,11 +171,19 @@ def train(force_regenerate: bool = False, reason: str = "") -> None:
                 "val_recall": round(float(m_val["recall"]), 4),
                 "val_f1": round(float(m_val["f1"]), 4),
                 "val_roc_auc": round(float(m_val["roc_auc"]), 4) if m_val.get("roc_auc") is not None else None,
+                "val_pr_auc": round(float(m_val["pr_auc"]), 4) if m_val.get("pr_auc") is not None else None,
+                "val_ks": round(float(m_val["ks"]), 4) if m_val.get("ks") is not None else None,
+                "val_brier_score": round(float(m_val["brier_score"]), 4) if m_val.get("brier_score") is not None else None,
+                "val_expected_calibration_error": round(float(m_val["expected_calibration_error"]), 4) if m_val.get("expected_calibration_error") is not None else None,
                 "test_accuracy": round(float(m_test["accuracy"]), 4),
                 "test_precision": round(float(m_test["precision"]), 4),
                 "test_recall": round(float(m_test["recall"]), 4),
                 "test_f1": round(float(m_test["f1"]), 4),
                 "test_roc_auc": round(float(m_test["roc_auc"]), 4) if m_test.get("roc_auc") is not None else None,
+                "test_pr_auc": round(float(m_test["pr_auc"]), 4) if m_test.get("pr_auc") is not None else None,
+                "test_ks": round(float(m_test["ks"]), 4) if m_test.get("ks") is not None else None,
+                "test_brier_score": round(float(m_test["brier_score"]), 4) if m_test.get("brier_score") is not None else None,
+                "test_expected_calibration_error": round(float(m_test["expected_calibration_error"]), 4) if m_test.get("expected_calibration_error") is not None else None,
             }
         )
         fitted[name] = pipe
@@ -204,6 +216,10 @@ def train(force_regenerate: bool = False, reason: str = "") -> None:
             "recall": float(best["val_recall"]),
             "f1": float(best["val_f1"]),
             "roc_auc": float(best["val_roc_auc"]) if best.get("val_roc_auc") is not None else None,
+            "pr_auc": float(best["val_pr_auc"]) if best.get("val_pr_auc") is not None else None,
+            "ks": float(best["val_ks"]) if best.get("val_ks") is not None else None,
+            "brier_score": float(best["val_brier_score"]) if best.get("val_brier_score") is not None else None,
+            "expected_calibration_error": float(best["val_expected_calibration_error"]) if best.get("val_expected_calibration_error") is not None else None,
         },
         "test_metrics": {
             "accuracy": float(best["test_accuracy"]),
@@ -211,6 +227,10 @@ def train(force_regenerate: bool = False, reason: str = "") -> None:
             "recall": float(best["test_recall"]),
             "f1": float(best["test_f1"]),
             "roc_auc": float(best["test_roc_auc"]) if best.get("test_roc_auc") is not None else None,
+            "pr_auc": float(best["test_pr_auc"]) if best.get("test_pr_auc") is not None else None,
+            "ks": float(best["test_ks"]) if best.get("test_ks") is not None else None,
+            "brier_score": float(best["test_brier_score"]) if best.get("test_brier_score") is not None else None,
+            "expected_calibration_error": float(best["test_expected_calibration_error"]) if best.get("test_expected_calibration_error") is not None else None,
         },
         "confusion_matrix": {
             "true_positive": int(tp),
@@ -229,7 +249,7 @@ def train(force_regenerate: bool = False, reason: str = "") -> None:
         "mapping_version": "0.1",  # synthetic generator; real raw->canonical mapping lives in pipeline/data/mapping.yaml
         "dataset_sha256": dataset_sha256,
         "seed": 42,
-        "rows": int(len(df)),
+        "rows": len(df),
         # --- serving contract: feature order + money units + split -----------
         # Serving MUST read these from here instead of hardcoding them, so the
         # artifact is the single source of truth for how inputs are interpreted.
@@ -242,9 +262,9 @@ def train(force_regenerate: bool = False, reason: str = "") -> None:
             "strategy": "stratified train/val/test",
             "test_size": split_test_size,
             "random_state": split_seed,
-            "n_train": int(len(X_train)),
-            "n_val": int(len(X_val)),
-            "n_test": int(len(X_test)),
+            "n_train": len(X_train),
+            "n_val": len(X_val),
+            "n_test": len(X_test),
             "note": "threshold + model selection use validation only; test is reporting only",
         },
     }
@@ -296,7 +316,7 @@ def _log_mlflow(model_name, version, meta, results, best_pipe, artifact_path) ->
     try:
         import mlflow
         import mlflow.sklearn
-    except Exception as exc:  # graceful degradation
+    except Exception as exc:  # graceful degradation  # noqa: BLE001
         sys.stdout.write(f"\n[mlflow] not available, skipping tracking ({exc})\n")
         return
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "").strip()
@@ -322,10 +342,14 @@ def _log_mlflow(model_name, version, meta, results, best_pipe, artifact_path) ->
                 mlflow.log_param("fp_cost", meta["fp_cost"])
                 for col in (
                     "val_accuracy", "val_precision", "val_recall", "val_f1",
-                    "test_accuracy", "test_precision", "test_recall", "test_f1",
-                    "business_cost",
+                    "val_roc_auc", "val_pr_auc", "val_ks", "val_brier_score",
+                    "val_expected_calibration_error", "test_accuracy",
+                    "test_precision", "test_recall", "test_f1", "test_roc_auc",
+                    "test_pr_auc", "test_ks", "test_brier_score",
+                    "test_expected_calibration_error", "business_cost",
                 ):
-                    mlflow.log_metric(col, float(row[col]))
+                    if pd.notna(row[col]):
+                        mlflow.log_metric(col, float(row[col]))
         mlflow.log_metric("business_cost", meta["business_cost"])
         mlflow.log_metric("rows", meta["rows"])
         try:
@@ -333,7 +357,7 @@ def _log_mlflow(model_name, version, meta, results, best_pipe, artifact_path) ->
             mlflow.log_artifact(str(BENCHMARK_CSV))
             mlflow.log_text(json.dumps(meta, indent=2), "meta.json")
             mlflow.sklearn.log_model(best_pipe, name="pipeline")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             sys.stdout.write(f"[mlflow] artifact logging skipped: {exc}\n")
         # Register the production model so the registry answers
         # "which model is currently serving?" (file store registers locally).
@@ -343,7 +367,7 @@ def _log_mlflow(model_name, version, meta, results, best_pipe, artifact_path) ->
                 "creditflow-risk",
             )
             sys.stdout.write(f"[mlflow] registered model version: {mv.version}\n")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             sys.stdout.write(f"[mlflow] model registry skipped: {exc}\n")
     sys.stdout.write("[mlflow] experiment 'creditflow-risk' logged.\n")
 

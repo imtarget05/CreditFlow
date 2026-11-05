@@ -9,14 +9,12 @@ Requires a trained model at models/production/ (run scripts/train_models.py firs
 """
 from __future__ import annotations
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from contextlib import ExitStack
-
-import pytest
 
 from fastapi.testclient import TestClient
 
@@ -51,6 +49,20 @@ def test_health_ok():
     assert body["status"] == "ok"
     assert body["model_loaded"] is True
     assert body["model_version"]
+    assert body["real_integrations_enabled"] is False
+
+
+def test_showcase_health_discloses_synthetic_mode(monkeypatch):
+    monkeypatch.setenv("CREDITFLOW_SHOWCASE", "1")
+    try:
+        r = client.get("/health")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["runtime_mode"] == "showcase"
+        assert body["data_classification"] == "synthetic demo data"
+        assert body["real_integrations_enabled"] is False
+    finally:
+        monkeypatch.delenv("CREDITFLOW_SHOWCASE", raising=False)
 
 
 def test_predict_valid_returns_full_payload():

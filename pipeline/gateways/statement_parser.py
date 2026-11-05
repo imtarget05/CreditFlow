@@ -7,8 +7,8 @@ Analyzes borrower transaction statements (via Open Banking / VietQR APIs):
 """
 from __future__ import annotations
 
-import re
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -19,7 +19,7 @@ class StatementAnalysisResult(BaseModel):
     salary_gap_ratio: float = Field(..., description="Tỷ lệ chênh lệch giữa lương khai báo và sao kê thực tế")
     cashflow_volatility: float = Field(..., ge=0.0, description="Hệ số biến động dòng tiền (0.0: rất ổn định -> 1.0: bấp bênh)")
     high_risk_transaction_count: int = Field(default=0, ge=0)
-    risk_keywords_detected: List[str] = Field(default_factory=list)
+    risk_keywords_detected: list[str] = Field(default_factory=list)
     statement_health_score: float = Field(..., ge=0.0, le=1.0, description="Điểm sức khỏe dòng tiền (0.0 - 1.0)")
     analyst_summary: str
 
@@ -34,7 +34,7 @@ RISK_KEYWORDS = [
 
 def analyze_bank_statement(
     declared_income: float,
-    transactions: Optional[List[Dict[str, Any]]] = None,
+    transactions: list[dict[str, Any]] | None = None,
 ) -> StatementAnalysisResult:
     """Analyze transaction inflows and detect cashflow risks.
 

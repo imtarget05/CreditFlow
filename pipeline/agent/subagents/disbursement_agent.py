@@ -1,8 +1,9 @@
-"""Disbursement Execution Sub-Agent – Action Agent executing ledger disbursement & audit records."""
+#!/usr/bin/env python3
+"""Disbursement execution agent for CreditFlow credit decision engine."""
 
 from __future__ import annotations
 
-from pipeline.agent.nodes import decision, execute, audit, human_approval
+from pipeline.agent.nodes import audit, decision, execute, human_approval
 
 
 class DisbursementExecutionAgent:

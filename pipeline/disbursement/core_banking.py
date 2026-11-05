@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import re
 import urllib.parse
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -63,7 +64,7 @@ def generate_vietqr_disbursement(
         f"?amount={int(safe_amount)}&addInfo={encoded_memo}&accountName={encoded_name}"
     )
 
-    now_compact = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    now_compact = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     ref = f"FT-{now_compact}-{clean_acc[-4:]}"
 
     return VietQRData(
@@ -89,8 +90,8 @@ def generate_loan_agreement(
     collateral_value: float = 0.0,
 ) -> LoanAgreement:
     """Generate structured legal text and agreement contract."""
-    now_iso = datetime.now(timezone.utc).isoformat()
-    now_human = datetime.now(timezone.utc).strftime("%d/%m/%Y")
+    now_iso = datetime.now(UTC).isoformat()
+    now_human = datetime.now(UTC).strftime("%d/%m/%Y")
 
     r = (annual_interest_rate / 12.0) if annual_interest_rate > 0 else 0.01
     factor = ((1 + r) ** loan_term_months)
@@ -161,7 +162,7 @@ def determine_authority_level(
     risk_level: str,
     has_policy_violations: bool = False,
     is_cic_clean: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Credit Approval Authority Matrix (Ma trận Thẩm quyền Phê duyệt Tín dụng).
 
     Level 0 (STP): <= 20M VND, LOW risk, no violations, clean CIC -> Auto-disburse.

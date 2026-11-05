@@ -19,29 +19,18 @@ Or step-by-step for interactive human approval:
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Command
 
-from pipeline.agent.checkpointer import FileCheckpointSaver
-from pipeline.agent.state import CreditState
 from pipeline.agent.nodes import (
-    load_application,
-    validate_input,
-    make_risk_model,
-    fraud_model,
-    policy_engine,
-    explain,
-    decision,
-    human_approval,
-    execute,
-    audit,
-    route_decision,
     after_human_approval,
+    load_application,
+    route_decision,
 )
+from pipeline.agent.state import CreditState
 
 OPERATIONAL_ERROR_CODES = frozenset({
     "MODEL_BUNDLE_INVALID",
@@ -63,10 +52,10 @@ def _classify_operational_error(exc: BaseException) -> str:
 
 
 from pipeline.agent.subagents import (
-    UnderwritingRiskAgent,
-    FraudComplianceAgent,
-    ExplainabilityAgent,
     DisbursementExecutionAgent,
+    ExplainabilityAgent,
+    FraudComplianceAgent,
+    UnderwritingRiskAgent,
 )
 
 
@@ -167,8 +156,8 @@ def run_credit_workflow(
     pipeline: Any,
     meta: dict,
     profile: dict,
-    thread_id: Optional[str] = None,
-    config: Optional[dict] = None,
+    thread_id: str | None = None,
+    config: dict | None = None,
 ) -> dict:
     """Run the full workflow to completion.
 
@@ -231,4 +220,3 @@ def run_credit_workflow(
             "workflow_complete": False,
         })
         return failed
-

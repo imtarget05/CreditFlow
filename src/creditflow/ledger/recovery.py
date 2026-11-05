@@ -9,7 +9,6 @@ This module provides functionality to recover ledger data from the last
 checkpoint file, ensuring data survives application restarts.
 """
 
-import os
 from pathlib import Path
 
 from src.creditflow.ledger.checkpoint import load_checkpoint

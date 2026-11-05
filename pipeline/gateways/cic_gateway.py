@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import UTC, datetime
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -34,11 +35,11 @@ class CICReport(BaseModel):
     active_institutions_count: int = Field(..., ge=0, description="Số TCTD đang có dư nợ")
     total_recorded_debt: float = Field(..., ge=0.0, description="Tổng dư nợ ghi nhận tại CIC (VND)")
     overdue_days_max: int = Field(..., ge=0, description="Số ngày quá hạn lớn nhất từng ghi nhận")
-    legal_warning: Optional[str] = None
+    legal_warning: str | None = None
 
 
 # Known fixed test CCCD accounts for deterministic automated testing
-KNOWN_CIC_PROFILES: Dict[str, Dict[str, Any]] = {
+KNOWN_CIC_PROFILES: dict[str, dict[str, Any]] = {
     # Khách hàng hạng 1 (Vàng): Không nợ xấu, điểm cực cao
     "001088012345": {
         "cic_score": 790,
@@ -87,13 +88,20 @@ GROUP_NAMES = {
 
 
 def _map_grade_from_score(score: int) -> str:
-    if score >= 750: return "Hạng 1 (Rất tốt)"
-    if score >= 700: return "Hạng 2 (Tốt)"
-    if score >= 650: return "Hạng 3 (Khá)"
-    if score >= 600: return "Hạng 4 (Trung bình khá)"
-    if score >= 550: return "Hạng 5 (Trung bình)"
-    if score >= 500: return "Hạng 6 (Dưới trung bình)"
-    if score >= 450: return "Hạng 7 (Kém)"
+    if score >= 750:
+        return "Hạng 1 (Rất tốt)"
+    if score >= 700:
+        return "Hạng 2 (Tốt)"
+    if score >= 650:
+        return "Hạng 3 (Khá)"
+    if score >= 600:
+        return "Hạng 4 (Trung bình khá)"
+    if score >= 550:
+        return "Hạng 5 (Trung bình)"
+    if score >= 500:
+        return "Hạng 6 (Dưới trung bình)"
+    if score >= 450:
+        return "Hạng 7 (Kém)"
     return "Hạng 8-10 (Rất kém / Rủi ro cao)"
 
 
@@ -109,7 +117,7 @@ def query_cic_report(national_id: str) -> CICReport:
     elif len(clean_id) > 12:
         clean_id = clean_id[:12]
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
 
     if clean_id in KNOWN_CIC_PROFILES:
         p = KNOWN_CIC_PROFILES[clean_id]
@@ -173,16 +181,16 @@ def query_cic_report(national_id: str) -> CICReport:
 
 
 def cross_validate_with_cic(
-    customer_data: Dict[str, Any],
+    customer_data: dict[str, Any],
     cic_report: CICReport,
-) -> Tuple[List[str], List[str]]:
+) -> tuple[list[str], list[str]]:
     """Cross-validate self-declared customer payload against official CIC registry.
 
     Returns:
         (fraud_flags, policy_violations)
     """
-    fraud_flags: List[str] = []
-    policy_violations: List[str] = []
+    fraud_flags: list[str] = []
+    policy_violations: list[str] = []
 
     declared_defaults = int(customer_data.get("previous_defaults", 0))
     declared_debt = float(customer_data.get("existing_debt", 0.0))
@@ -205,9 +213,8 @@ def cross_validate_with_cic(
 
     # 3. Debt under-reporting detection
     # If self-declared debt is less than half of official CIC debt (and difference > 15M VND)
-    if cic_report.total_recorded_debt > 15_000_000.0:
-        if declared_debt < 0.5 * cic_report.total_recorded_debt:
-            fraud_flags.append(
+    if cic_report.total_recorded_debt > 15_000_000.0 and declared_debt < 0.5 * cic_report.total_recorded_debt:
+        fraud_flags.append(
                 f"cic_debt_underreporting_detected: Self-declared debt ({declared_debt:,.0f} VND) "
                 f"is significantly lower than official CIC balance ({cic_report.total_recorded_debt:,.0f} VND)."
             )

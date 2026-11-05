@@ -19,10 +19,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# App code + trained pipeline/model + benchmark artifacts
+# App code + trained pipeline/model + benchmark artifacts + policy corpus used by
+# the read-only analyst assistant and TF-IDF policy retriever.
 COPY backend/ backend/
 COPY pipeline/ pipeline/
 COPY models/production/ models/production/
+COPY docs/policy/ docs/policy/
 EXPOSE 8080
 
 CMD ["sh", "-c", "uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8080}"]

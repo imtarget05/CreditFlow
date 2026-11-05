@@ -28,13 +28,13 @@ import importlib
 import json
 import logging
 import os
-import pickle
 import threading
 import uuid
 from collections import defaultdict
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
+from datetime import UTC
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import DeltaChannelHistory
@@ -400,7 +400,7 @@ class FileCheckpointSaver(InMemorySaver):
                     data = _decode_obj(json.loads(content))
                 else:
                     return
-        except Exception:
+        except Exception:  # noqa: BLE001
             self._quarantine_corrupt_file()
             return
         if not data:
@@ -417,9 +417,9 @@ class FileCheckpointSaver(InMemorySaver):
 
     def _quarantine_corrupt_file(self) -> None:
         """Move a corrupt checkpoint aside; never unpickle it."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         target = self._path.with_name(f"{self._path.name}.corrupt-{stamp}")
         try:
             os.replace(self._path, target)

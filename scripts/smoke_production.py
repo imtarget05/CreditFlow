@@ -17,9 +17,10 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE = (os.environ.get("CREDITFLOW_SMOKE_BASE") or "https://creditflow-api.blackisland-5a3f0246.southeastasia.azurecontainerapps.io").rstrip("/")
+BASE = (os.environ.get("CREDITFLOW_SMOKE_BASE") or "https://creditflow-api.proudstone-70150af3.southeastasia.azurecontainerapps.io").rstrip("/")
 ORIGIN = os.environ.get("CREDITFLOW_SMOKE_ORIGIN") or "https://imtarget05.github.io"
 API_KEY = os.environ.get("CREDITFLOW_SMOKE_API_KEY") or ""
+READ_ONLY = os.environ.get("CREDITFLOW_SMOKE_READ_ONLY") == "1"
 FAILS = []
 
 
@@ -80,27 +81,30 @@ def main():
     st, _, _ = req("/applications")
     check("auth gate (GET /applications -> 401 without key)", st == 401, f"({st})")
 
-    # Intake scoring is unauthenticated by design (docs/CV_EVIDENCE.md).
-    payload = json.dumps({
-        "income": 8_000_000,
-        "age": 35,
-        "employment_years": 8,
-        "loan_amount": 120_000_000,
-        "loan_term": 36,
-        "existing_debt": 15_000_000,
-        "credit_history": 9,
-        "previous_defaults": 0,
-    }).encode()
-    st, body, _ = req("/predict", method="POST",
-                      headers={"Content-Type": "application/json"}, data=payload)
-    ok, detail = st == 200, f"({st})"
-    if ok:
-        try:
-            p = json.loads(body)
-            detail = f"(decision={p.get('decision')}, risk={p.get('risk_probability')}, model={p.get('model_version')})"
-        except json.JSONDecodeError:
-            ok, detail = False, "(non-JSON body)"
-    check("POST /predict business scoring", ok, detail)
+    if READ_ONLY:
+        print("SKIP | POST /predict (read-only verification mode)")
+    else:
+        # Intake scoring records a synthetic inference for drift monitoring.
+        payload = json.dumps({
+            "income": 8_000_000,
+            "age": 35,
+            "employment_years": 8,
+            "loan_amount": 120_000_000,
+            "loan_term": 36,
+            "existing_debt": 15_000_000,
+            "credit_history": 9,
+            "previous_defaults": 0,
+        }).encode()
+        st, body, _ = req("/predict", method="POST",
+                          headers={"Content-Type": "application/json"}, data=payload)
+        ok, detail = st == 200, f"({st})"
+        if ok:
+            try:
+                p = json.loads(body)
+                detail = f"(decision={p.get('decision')}, risk={p.get('risk_probability')}, model={p.get('model_version')})"
+            except json.JSONDecodeError:
+                ok, detail = False, "(non-JSON body)"
+        check("POST /predict business scoring", ok, detail)
 
     if API_KEY:
         st, _, _ = req("/applications", headers={"X-CreditFlow-API-Key": API_KEY})

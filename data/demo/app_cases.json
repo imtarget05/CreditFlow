@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "purpose": "Synthetic local CreditFlow scoring and validation cases; no real customers or bank approval",
+  "endpoint": "/predict",
+  "cases": [
+    {
+      "id": "stable-income",
+      "label": "Thu nhập ổn định",
+      "expected_http_status": 200,
+      "profile": {"income": 18000000, "age": 38, "employment_years": 12, "loan_amount": 80000000, "loan_term": 24, "existing_debt": 5000000, "credit_history": 10, "previous_defaults": 0}
+    },
+    {
+      "id": "typical-applicant",
+      "label": "Hồ sơ phổ biến",
+      "expected_http_status": 200,
+      "profile": {"income": 9000000, "age": 32, "employment_years": 5, "loan_amount": 120000000, "loan_term": 36, "existing_debt": 25000000, "credit_history": 6, "previous_defaults": 0}
+    },
+    {
+      "id": "high-debt",
+      "label": "Dư nợ hiện hữu cao",
+      "expected_http_status": 200,
+      "profile": {"income": 7000000, "age": 42, "employment_years": 7, "loan_amount": 200000000, "loan_term": 48, "existing_debt": 140000000, "credit_history": 4, "previous_defaults": 0}
+    },
+    {
+      "id": "past-defaults",
+      "label": "Có lịch sử không trả nợ",
+      "expected_http_status": 200,
+      "profile": {"income": 11000000, "age": 45, "employment_years": 9, "loan_amount": 90000000, "loan_term": 24, "existing_debt": 20000000, "credit_history": 8, "previous_defaults": 2}
+    },
+    {
+      "id": "young-applicant",
+      "label": "Người vay trẻ tuổi",
+      "expected_http_status": 200,
+      "profile": {"income": 5500000, "age": 19, "employment_years": 1, "loan_amount": 15000000, "loan_term": 12, "existing_debt": 0, "credit_history": 0, "previous_defaults": 0}
+    },
+    {
+      "id": "near-retirement",
+      "label": "Người vay lớn tuổi",
+      "expected_http_status": 200,
+      "profile": {"income": 16000000, "age": 69, "employment_years": 35, "loan_amount": 50000000, "loan_term": 18, "existing_debt": 0, "credit_history": 30, "previous_defaults": 0}
+    },
+    {
+      "id": "minimum-money",
+      "label": "Ngưỡng tiền tối thiểu hợp lệ",
+      "expected_http_status": 200,
+      "profile": {"income": 1000000, "age": 24, "employment_years": 2, "loan_amount": 1000000, "loan_term": 6, "existing_debt": 0, "credit_history": 1, "previous_defaults": 0}
+    },
+    {
+      "id": "zero-history",
+      "label": "Chưa có lịch sử tín dụng",
+      "expected_http_status": 200,
+      "profile": {"income": 12000000, "age": 28, "employment_years": 4, "loan_amount": 60000000, "loan_term": 24, "existing_debt": 3000000, "credit_history": 0, "previous_defaults": 0}
+    },
+    {
+      "id": "age-too-young",
+      "label": "Tuổi dưới ngưỡng",
+      "expected_http_status": 422,
+      "profile": {"income": 8000000, "age": 17, "employment_years": 0, "loan_amount": 20000000, "loan_term": 12, "existing_debt": 0, "credit_history": 0, "previous_defaults": 0}
+    },
+    {
+      "id": "employment-exceeds-age",
+      "label": "Thâm niên vượt số năm trưởng thành",
+      "expected_http_status": 422,
+      "profile": {"income": 8000000, "age": 22, "employment_years": 8, "loan_amount": 20000000, "loan_term": 12, "existing_debt": 0, "credit_history": 1, "previous_defaults": 0}
+    },
+    {
+      "id": "negative-debt",
+      "label": "Dư nợ âm",
+      "expected_http_status": 422,
+      "profile": {"income": 8000000, "age": 35, "employment_years": 8, "loan_amount": 20000000, "loan_term": 12, "existing_debt": -1000000, "credit_history": 7, "previous_defaults": 0}
+    },
+    {
+      "id": "training-units-rejected",
+      "label": "Nhầm nghìn VND với VND",
+      "expected_http_status": 422,
+      "profile": {"income": 8000, "age": 35, "employment_years": 8, "loan_amount": 120000, "loan_term": 36, "existing_debt": 15000, "credit_history": 9, "previous_defaults": 0}
+    },
+    {
+      "id": "missing-loan-term",
+      "label": "Thiếu kỳ hạn vay",
+      "expected_http_status": 422,
+      "profile": {"income": 8000000, "age": 35, "employment_years": 8, "loan_amount": 120000000, "existing_debt": 15000000, "credit_history": 9, "previous_defaults": 0}
+    },
+    {
+      "id": "credit-history-exceeds-age",
+      "label": "Lịch sử tín dụng vượt số năm trưởng thành",
+      "expected_http_status": 422,
+      "profile": {"income": 8000000, "age": 25, "employment_years": 4, "loan_amount": 30000000, "loan_term": 18, "existing_debt": 0, "credit_history": 12, "previous_defaults": 0}
+    }
+  ]
+}

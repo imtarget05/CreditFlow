@@ -23,44 +23,60 @@ Policy + cost-tuned ML threshold decide; a human only confirms REVIEW.
 """
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timezone
 import time
-from typing import Any, Callable
+import uuid
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from langgraph.types import interrupt
 
+from pipeline.agent.explanations import explanation_to_text, generate_explanation
+from pipeline.agent.fraud import run_fraud_check
+from pipeline.agent.policy import has_blocking_violation, run_policy_check
+from pipeline.agent.retriever import retrieve
 from pipeline.agent.state import (
+    APPROVAL_APPROVED,
+    APPROVAL_PENDING,
+    APPROVAL_REJECTED,
+    AUDIT_FAILURE,
+    AUDIT_SUCCESS,
     DECISION_APPROVE,
     DECISION_REJECT,
     DECISION_REVIEW,
     RISK_HIGH,
     RISK_LOW,
     RISK_MEDIUM,
-    APPROVAL_APPROVED,
-    APPROVAL_PENDING,
-    APPROVAL_REJECTED,
-    AUDIT_FAILURE,
-    AUDIT_SUCCESS,
     AuditEntry,
     CreditState,
 )
-from pipeline.agent.fraud import run_fraud_check
-from pipeline.agent.policy import run_policy_check, has_blocking_violation
-from pipeline.agent.explanations import generate_explanation, explanation_to_text
-from pipeline.agent.retriever import retrieve
-from pipeline.validation.schemas import validate_dataframe
-
-from pipeline.gateways.cic_gateway import query_cic_report, cross_validate_with_cic
+from pipeline.disbursement.core_banking import (
+    determine_authority_level,
+    generate_loan_agreement,
+    generate_vietqr_disbursement,
+)
+from pipeline.disbursement.core_banking_adapter import (
+    CoreBankingAdapter,
+    DisbursementStatus,
+)
+from pipeline.financial.credit_risk import (
+    calculate_basel_metrics,
+    calculate_risk_based_pricing,
+    generate_amortization_schedule,
+)
+from pipeline.gateways.cic_gateway import query_cic_report
 from pipeline.gateways.statement_parser import analyze_bank_statement
-from pipeline.financial.credit_risk import calculate_basel_metrics, calculate_risk_based_pricing, generate_amortization_schedule
-from pipeline.disbursement.core_banking import determine_authority_level, generate_vietqr_disbursement, generate_loan_agreement
-
 from pipeline.modeling.threshold import (
-    business_decision,
     DEFAULT_APPROVE_MAX,
     DEFAULT_REVIEW_MAX,
+    business_decision,
 )
+from pipeline.storage.ledger import get_application_by_id, record_disbursement
+from pipeline.validation.schemas import validate_dataframe
+
+# Demo core-banking adapter — production graph execution is blocked by the API.
+# A missing authenticated human checker leaves disbursement pending.
+_core_banking = CoreBankingAdapter(default_maker_id="creditflow-system")
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +84,7 @@ from pipeline.modeling.threshold import (
 # ---------------------------------------------------------------------------
 def _audit_entry(step: str, status: str, detail: str = "") -> AuditEntry:
     return AuditEntry(
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
         step=step,
         status=status,
         detail=detail,
@@ -76,7 +92,7 @@ def _audit_entry(step: str, status: str, detail: str = "") -> AuditEntry:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -113,11 +129,12 @@ def make_validate_input() -> Callable:
     (e.g. mock) without touching the real schema.
     """
     def validate_input(state: CreditState) -> dict:
+        import pandas as pd
+
         from pipeline.validation.schemas import (
             validate_dataframe,
             validate_money_unit_contract,
         )
-        import pandas as pd
 
         data: dict = state.get("customer_data", {})
         df = pd.DataFrame([data])
@@ -163,8 +180,9 @@ def make_risk_model(pipeline: Any, meta: dict) -> Callable:
     """
 
     def risk_model(state: CreditState) -> dict:
-        from backend.predict_service import _build_reasons
         import pandas as pd
+
+        from backend.predict_service import _build_reasons
         from pipeline.feature_engineering.features import add_derived_features
 
         data: dict = state.get("customer_data", {})
@@ -288,7 +306,6 @@ def fetch_gateways(state: CreditState) -> dict:
     trail.append(_audit_entry("gateways", AUDIT_SUCCESS, f"CIC report fetched, score={cic_report.cic_score}"))
     
     income = state.get("customer_data", {}).get("income", 50000)
-    raw_statement_text = f"Salary deposit: {income}\nExpense: 5000"
     parsed = analyze_bank_statement(declared_income=income)
     _stmt_dump = parsed.model_dump()
     _stmt_dump["source_mode"] = "SIMULATION"
@@ -480,6 +497,11 @@ def human_approval(state: CreditState) -> dict:
 
     Uses ``langgraph.types.interrupt`` so the framework persists state and
     resumes only when an external `/approve` or `/reject` call is made.
+
+    The resume payload carries the human decision. When it is a mapping it may
+    also carry ``approver_id`` — the authenticated human checker identity for
+    the demo adapter. A plain string carries no verified identity, so no
+    disbursement may be executed from that path.
     """
     decision_val = state.get("decision", DECISION_REVIEW)
     if decision_val != DECISION_REVIEW or not state.get("approval_required"):
@@ -502,8 +524,14 @@ def human_approval(state: CreditState) -> dict:
         "current_decision": decision_val,
     })
 
-    # The human responds: "approve" or "reject" (possibly with a note)
-    human_choice = str(action).lower().strip()
+    # The human responds: "approve" or "reject" (possibly with a note).
+    # A dict resume payload may carry {"action": ..., "approver_id": ...}.
+    approver_id = None
+    if isinstance(action, dict):
+        human_choice = str(action.get("action", "")).lower().strip()
+        approver_id = (action.get("approver_id") or "").strip() or None
+    else:
+        human_choice = str(action).lower().strip()
     approved = human_choice in ("approve", "approved", "accept", "yes")
 
     updates: dict = {}
@@ -511,6 +539,12 @@ def human_approval(state: CreditState) -> dict:
         updates["approval_status"] = APPROVAL_APPROVED
         updates["decision"] = DECISION_APPROVE
         updates["next"] = "execute"
+        # Dual-control checker identity for the execute node (maker != checker).
+        updates["checker_id"] = (
+            approver_id
+            or state.get("request_meta", {}).get("caller")
+            or ""
+        )
     else:
         updates["approval_status"] = APPROVAL_REJECTED
         updates["decision"] = DECISION_REJECT
@@ -529,10 +563,15 @@ def human_approval(state: CreditState) -> dict:
 # Node 9: execute — action taken on an APPROVE (e.g. disburse, log)
 # ---------------------------------------------------------------------------
 def execute(state: CreditState) -> dict:
-    """Execute the approved action — generates VietQR and formal Loan Agreement."""
+    """Prepare demo artifacts and use the sandbox only with a human checker.
+
+    Keeps the VietQR + loan agreement generation, then runs the core-banking
+    lifecycle: maker initiate -> checker approve -> simulated transfer. The
+    production workflow is disabled until an approved bank adapter exists.
+    """
     app_id = state.get("application_id", "unknown")
     trail = state.get("audit_trail", []) + []
-    
+
     loan_amount = state.get("loan_amount", state.get("customer_data", {}).get("loan_amount", 10000))
     customer_name = state.get("customer_data", {}).get("name", "CUSTOMER")
     national_id = state.get("national_id", "001002003004")
@@ -553,13 +592,107 @@ def execute(state: CreditState) -> dict:
     )
     # The current tests likely expect a PDF string or some dict. We'll return agreement as dict or string
     agreement_pdf = agreement.legal_text if hasattr(agreement, "legal_text") else str(agreement)
-    
+
     trail.append(_audit_entry("execute", AUDIT_SUCCESS, "Generated VietQR & Loan Agreement"))
-    trail.append(_audit_entry("execute", AUDIT_SUCCESS, f"approved application {app_id} — disbursement pending — no real transfer executed (stub)"))
-    
+
+    idem_key = f"disburse:{app_id}"
+    account_number = state.get(
+        "account_number", state.get("customer_data", {}).get("account_number", "0987654321")
+    )
+    account_name = state.get(
+        "account_name", state.get("customer_data", {}).get("account_name", "NGUYEN VAN A")
+    )
+
+    core_banking_transaction_id = None
+    core_banking_status = None
+    bank_reference = None
+    disbursement_executed = False
+
+    checker_id = state.get("checker_id") or ""
+    if not checker_id:
+        trail.append(_audit_entry(
+            "execute", AUDIT_SUCCESS,
+            "recommendation prepared; disbursement pending authenticated human checker",
+        ))
+        return {
+            "vietqr_url": vietqr_url,
+            "loan_agreement_pdf": agreement_pdf,
+            "core_banking_transaction_id": None,
+            "core_banking_status": "PENDING_HUMAN_CHECKER",
+            "bank_reference": None,
+            "disbursement_executed": False,
+            "audit_trail": trail,
+        }
+
+    try:
+        # --- Maker side: initiate the disbursement (PENDING) ---
+        initiate = _core_banking.initiate_disbursement(
+            application_id=app_id,
+            loan_amount=loan_amount,
+            account_number=account_number,
+            account_name=account_name,
+            idempotency_key=f"{idem_key}:initiate",
+            maker_id="creditflow-system",
+        )
+        core_banking_transaction_id = initiate.transaction_id
+        core_banking_status = str(initiate.status)
+        trail.append(_audit_entry("execute", AUDIT_SUCCESS,
+            f"core banking disbursement initiated: txn={core_banking_transaction_id} "
+            f"reference={initiate.reference_code} maker=creditflow-system"))
+
+        # --- Checker side: authenticated human identity (PENDING -> APPROVED) ---
+        _core_banking.approve_disbursement(
+            transaction_id=core_banking_transaction_id,
+            approver_id=checker_id,
+            idempotency_key=f"{idem_key}:approve",
+        )
+        core_banking_status = str(DisbursementStatus.APPROVED)
+        trail.append(_audit_entry("execute", AUDIT_SUCCESS,
+            f"disbursement {core_banking_transaction_id} approved by checker={checker_id}"))
+
+        # --- Execute the transfer via the VietQR/NAPAS sandbox ---
+        result = _core_banking.execute_disbursement(
+            transaction_id=core_banking_transaction_id,
+            idempotency_key=f"{idem_key}:execute",
+        )
+        core_banking_status = str(result.status)
+        bank_reference = result.bank_reference
+        disbursement_executed = result.status == DisbursementStatus.COMPLETED
+        trail.append(_audit_entry("execute", AUDIT_SUCCESS,
+            f"disbursement {core_banking_transaction_id} executed: "
+            f"status={core_banking_status} bank_reference={bank_reference}"))
+
+        # --- Durable ledger entry (tamper-evident general ledger) ---
+        try:
+            app_row = get_application_by_id(app_id)
+            if app_row is not None:
+                ledger_row = record_disbursement(
+                    application_id=int(app_row["id"]),
+                    loan_amount=loan_amount,
+                    idempotency_key=idem_key,
+                )
+                trail.append(_audit_entry("execute", AUDIT_SUCCESS,
+                    f"disbursement recorded in durable ledger: "
+                    f"id={ledger_row['id']} contract_code={ledger_row['contract_code']}"))
+            else:
+                trail.append(_audit_entry("execute", AUDIT_FAILURE,
+                    f"ledger record skipped: loan application {app_id} not found"))
+        except Exception as ledger_exc:  # ledger evidence must never fail disbursement  # noqa: BLE001
+            trail.append(_audit_entry("execute", AUDIT_FAILURE,
+                f"ledger record failed: {ledger_exc}"))
+
+    except Exception as exc:
+        trail.append(_audit_entry("execute", AUDIT_FAILURE,
+            f"core banking disbursement failed: {exc}"))
+        raise RuntimeError(f"DISBURSEMENT_FAILED: {exc}") from exc
+
     return {
         "vietqr_url": vietqr_url,
         "loan_agreement_pdf": agreement_pdf,
+        "core_banking_transaction_id": core_banking_transaction_id,
+        "core_banking_status": core_banking_status,
+        "bank_reference": bank_reference,
+        "disbursement_executed": disbursement_executed,
         "audit_trail": trail
     }
 

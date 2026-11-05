@@ -9,15 +9,16 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from contextlib import ExitStack
+
 import pytest
 from fastapi.testclient import TestClient
+
 from backend.app import app
 from backend.predict_service import get_model_artifact_checksum
 from pipeline.storage.ledger import (
-    get_decision_snapshot,
-    list_documents,
-    verify_decision_snapshot_hash,
     _connect,
+    get_decision_snapshot,
+    verify_decision_snapshot_hash,
 )
 from tests.auth_support import AUTH_HEADERS, configure_auth_env
 
@@ -144,7 +145,6 @@ def test_decision_anti_double_click_idempotency():
 
 def test_model_drift_triggers_domain_event(monkeypatch):
     """When detect_drift reports DRIFT_DETECTED, a ModelDriftDetected outbox event is emitted."""
-    from backend import app as backend_app
 
     def fake_detect_drift(reference, recent):
         return {

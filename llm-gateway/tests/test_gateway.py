@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -12,7 +11,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import server  # noqa: E402
+import server
 
 REQUIRED_FIELDS = {
     "ts", "project", "model", "endpoint", "latency_ms",
@@ -20,7 +19,7 @@ REQUIRED_FIELDS = {
     "usage", "status", "error",
 }
 
-SECRET = "TOP-SECRET-PROMPT-CONTENT-9f3a2b"
+SECRET = "demo-prompt-content"
 
 
 # ---------------------------------------------------------------- fake upstream
@@ -465,7 +464,6 @@ def test_metrics_endpoint_returns_prometheus_format(gw):
     resp = gw.get("/metrics")
     assert resp.status_code == 200
     assert "text/plain" in resp.headers["content-type"]
-    body = resp.text
     # Call chat completion to bump metrics
     gw.post(
         "/v1/chat/completions",
@@ -502,13 +500,12 @@ def test_model_alias_resolution(gw, fake):
         json={"model": "reasoning", "messages": [{"role": "user", "content": "solve this"}]},
         headers={"X-Project": "MAIA"},
     )
-    log_rec = gw.app.state.last_rec if hasattr(gw.app.state, "last_rec") else None
+    gw.app.state.last_rec if hasattr(gw.app.state, "last_rec") else None
     # Verify alias mapping function directly
     assert server.resolve_model_alias("reasoning") == "deepseek/deepseek-r1-0528-qwen3-8b"
     assert server.resolve_model_alias("fast") == "nvidia/nemotron-3-nano-4b"
     assert server.resolve_model_alias("vision") == "qwen2.5-vl-3b-instruct"
     # Auto-detect image
-    img_msg = [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "http://img.jpg"}}]}]
     assert server.resolve_model_alias("", has_image=True) == "qwen2.5-vl-3b-instruct"
 
 
