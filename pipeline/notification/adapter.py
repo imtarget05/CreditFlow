@@ -526,17 +526,10 @@ class NotificationAdapter:
         """Send a model drift alert to the risk committee."""
         variables = {
             "model_version": model_version,
-            "drifted_features": drifted_features,
-            "psi_values": psi_values,
+            "drifted_features": ", ".join(drifted_features),
+            "psi_values": json.dumps(psi_values, ensure_ascii=False),
         }
-        subject, content = render_template(
-            "drift_alert",
-            {
-                "model_version": model_version,
-                "drifted_features": ", ".join(drifted_features),
-                "psi_values": json.dumps(psi_values, ensure_ascii=False),
-            },
-        )
+        subject, content = render_template("drift_alert", variables)
         return self.send(
             recipient_id=recipient_id,
             recipient_type=recipient_type,
