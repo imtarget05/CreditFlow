@@ -14,7 +14,7 @@ A green internal job named “SonarCloud scan” does not prove a scan ran when 
 
 The later [CI run on `c3d51db`](https://github.com/imtarget05/CreditFlow/actions/runs/41853409578) correctly failed the new Sonar token validation. The credential exposed in chat must be replaced through SonarCloud and GitHub Secrets before this branch can have a fully green internal scanner job. The earlier `b5b69ea` run remains the verified green candidate for code checks; no cloud CreditFlow control is accepted yet.
 
-The signed-in GitHub, Cloudflare and Azure accounts establish owner access. They do not establish Risk, InfoSec, IAM or business approval for real credit data. Synthetic fixtures in `data/demo/app_cases.json` support demos only. Keep production use of real applicant data OPEN until bank-owned controls have named approvers and evidence.
+The signed-in GitHub, Cloudflare and Azure accounts establish owner access. They do not establish Risk, InfoSec, IAM or business approval for real credit data. Synthetic fixtures in `data/demo/app_cases.json` support demos only (financial/credit-scoring domain: loan application profiles with income, debt, credit history). Keep production use of real applicant data OPEN until bank-owned controls have named approvers and evidence.
 
 ---
 
