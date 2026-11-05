@@ -1,7 +1,7 @@
 {
   "gate": "5",
   "title": "Independent Model Validation (temporal backtest + calibration + subgroup)",
-  "generated_at": "2026-11-05T05:40:53.479202+00:00",
+  "generated_at": "2026-11-05T06:49:18.535727+00:00",
   "model_version": "logistic_regression_v001",
   "model_name": "logistic_regression",
   "threshold": 0.2,
