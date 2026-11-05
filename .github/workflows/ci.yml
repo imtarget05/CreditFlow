@@ -132,8 +132,14 @@ jobs:
           pip install -r requirements-dev.txt
           pip install pytest-cov
 
-      - name: Run tests with coverage (fast only, gated)
-        run: python -m pytest tests/ -q -m "not integration and not slow and not live and not infra" --strict-markers --cov=pipeline --cov=backend --cov=src --cov-fail-under=75 --cov-report=term-missing --cov-report=xml
+      - name: Run tests with coverage (fast only)
+        # Include operational scripts and DAGs in the Sonar report. The
+        # established 75% ratchet below still measures the original core
+        # backend/pipeline/src scope, so broadening the report cannot weaken it.
+        run: python -m pytest tests/ airflow/tests/ -q -m "not integration and not slow and not live and not infra" --strict-markers --cov=pipeline --cov=backend --cov=src --cov=scripts --cov=airflow --cov-report=term-missing --cov-report=xml
+
+      - name: Enforce core coverage ratchet
+        run: python -m coverage report --include='backend/*,pipeline/*,src/*' --fail-under=75
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
