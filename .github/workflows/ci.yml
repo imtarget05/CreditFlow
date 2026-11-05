@@ -140,7 +140,7 @@ jobs:
         with:
           name: coverage-xml
           path: coverage.xml
-          if-no-files-found: warn
+          if-no-files-found: error
 
   gitleaks:
     # Secret scanning — HARD GATE (default config). Fails the build on leaks.
@@ -269,6 +269,12 @@ jobs:
             echo "::error::SONAR_TOKEN is unset or empty. Recreate and configure the GitHub secret before running SonarCloud."
             exit 1
           fi
+      - name: Download backend coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-xml
+      - name: Require coverage report
+        run: test -s coverage.xml
       - name: SonarCloud scan
         run: |
           set -euxo pipefail
