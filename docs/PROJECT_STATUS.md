@@ -28,8 +28,8 @@ Status: **sẵn sàng thực hiện, chờ chủ tài khoản tự thực hiện
 | T2 | Thêm GitHub Secrets (SONAR_TOKEN, CLOUDFLARE_API_TOKEN, RENDER_API_KEY, SONAR_ORGANIZATION) | GitHub Repo Settings → Secrets | ⏳ Chờ user | SONAR_TOKEN đã set; còn CLOUDFLARE_API_TOKEN, RENDER_API_KEY, SONAR_ORGANIZATION |
 | T3 | Chạy lại CI/Sonar workflows, verify xanh | GitHub Actions | ✅ Done | CreditFlow CI ✅, QuanLyKho CI ✅, AKS pr-gate ✅ (tất cả job xanh incl. SonarCloud). Root cause: `secrets` context không available ở job-level `if` → xóa dòng đó. |
 | T4 | Deploy Cloudflare Pages (`apps/sre-console`) | Máy local (`wrangler`) | ⏳ Chờ user | Cần `CLOUDFLARE_API_TOKEN` |
-| T5 | Deploy Render (`app/sre-demo-api`) | Render Dashboard | ⏳ Chờ user | Connect GitHub repo, đọc `render.yaml` |
-| T6 | Cập nhật file này sau khi T3–T5 xong | `CreditFlow/docs/PROJECT_STATUS.md` | 🔄 Đang cập nhật | T3 đã xong; T4, T5 còn chờ user |
+| T5 | Deploy Render (`app/sre-demo-api`) | Render Dashboard | ✅ Done | Live: https://sre-demo-api.onrender.com — health check /health/live verified |
+| T6 | Cập nhật file này sau khi T3–T5 xong | `CreditFlow/docs/PROJECT_STATUS.md` | 🔄 Đang cập nhật | T3, T5 đã xong; T4 còn chờ user |
 
 ### Out-of-scope (không làm trong plan này)
 - **Azure AKS terraform apply:** bị chặn bởi `constraint.no_azure_production_mutations`. Cần infra team mở quyền tenant/cluster/Private Link.
