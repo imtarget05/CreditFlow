@@ -1,105 +1,52 @@
-# CreditFlow — Interview Demo Script (5–10 phút, chạy hoàn toàn local)
+# CreditFlow localhost interview demo
 
-Mục đích: minh họa quy trìnhCredit Risk Decisioning từ submit → score → REVIEW → maker/checker approval → audit trail, không phụ thuộc Azure/private link.
+This demo drives the real FastAPI and LangGraph routes through a synthetic
+REVIEW → approve → replay → ledger → audit flow. It uses an isolated Docker
+container and does not call Azure, Render, a bank IdP or a payment rail.
 
-## Yêu cầu trước khi demo
+From the repository root with Docker running:
 
-- Python 3.12+, venv đã cài (`pip install -r requirements.txt`)
-- PostgreSQL local chạy (hoặc dùng SQLite nếu không có Postgres)
-- `models/production/pipeline.joblib` đã tồn tại (đã có sẵn trong repo)
-
-## Bước 1: Khởi động backend
-
-```bash
-cd /Users/mainguyenbinhtan/Downloads/CreditFlow
-
-# Nếu dùng PostgreSQL (khuyên dùng để verify encrypted storage):
-export DATABASE_URL="postgresql://creditflow:creditflow@localhost:5432/creditflow"
-export CREDITFLOW_ENCRYPTION_KEY="creditflow-demo-key-32chars!!!!"
-
-uvicorn backend.app:app --reload --port 8080
+```sh
+docker build -f Dockerfile.api -t creditflow-api-graph-demo .
+docker run --rm -d --name creditflow-graph-demo \
+  -p 127.0.0.1:18081:8000 \
+  -e CREDITFLOW_ENV=development \
+  -e CREDITFLOW_ALLOW_ANONYMOUS_DEMO=1 \
+  -e CREDITFLOW_API_KEY=local-graph-demo-only \
+  -e CREDITFLOW_API_KEY_ID=demo-reviewer \
+  -e CREDITFLOW_API_KEY_ROLE=RISK_COMMITTEE_L2 \
+  creditflow-api-graph-demo
+CREDITFLOW_API_KEY=local-graph-demo-only \
+  python3 scripts/run_local_graph_demo.py \
+  --base-url http://127.0.0.1:18081 \
+  --output /tmp/creditflow-graph-demo.json
+docker stop creditflow-graph-demo
 ```
 
-Backend chạy tại `http://localhost:8000`.
+The runner checks a paused `REVIEW`, approval by the configured local reviewer,
+an `APPROVED` application, one completed disbursement, a 64-character ledger
+hash, the same disbursement on replay, and an audit decision. It verifies
+`hash_valid` on the ledger read. The local key is a throwaway demo value and
+must never be used for a deployment. The container's SQLite ledger and graph
+checkpoint are disposable when stopped.
 
-## Bước 2: Submit application → score
+The flow is single-process and uses a bundled model trained on synthetic proxy
+data. A model score or APPROVE outcome is **not** validated for real lending.
+`CREDITFLOW_ALLOW_ANONYMOUS_DEMO=1` is accepted only outside production, and
+approval still requires an API key with adequate authority. The graph's
+explanation can use a deterministic fallback when no local LLM is configured;
+this demo does not prove live LLM quality. See
+[`docs/evidence/local-api-2026-11-19.md`](docs/evidence/local-api-2026-11-19.md)
+for the separate 14-case scoring contract and the synthetic model's limits.
 
-```bash
-curl -s -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{"customer_data": {"income": 8000000, "age": 35, "loan_amount": 50000000, "loan_term": 36, "existing_debt": 2000000, "credit_history": 9, "previous_defaults": 0}}'
+For tests covering the behavior in an isolated process:
+
+```sh
+python3 -m pytest -q tests/test_e2e_disbursement.py
 ```
 
-Kết quả mong đợi: JSON có `score`, `decision` (APPROVE/REVIEW/REJECT), `risk_score`.
-
-## Bước 3: Borderline case → REVIEW (LangGraph interrupt)
-
-```bash
-curl -s -X POST http://localhost:8000/predict/graph \
-  -H "Content-Type: application/json" \
-  -d '{"customer_data": {"income": 5000000, "age": 28, "loan_amount": 120000000, "loan_term": 60, "existing_debt": 5000000, "credit_history": 4, "previous_defaults": 1}}'
-```
-
-Kết quả: `approval_required: true`, workflow paused tại `human_approval`.
-
-## Bước 4: Maker/checker approval (idempotent)
-
-```bash
-curl -s -X POST http://localhost:8000/predict/graph/{thread_id}/approve \
-  -H "Content-Type: application/json" \
-  -H "X-CreditFlow-API-Key: demo-key" \
-  -d '{"action": "approve", "idempotency_key": "demo-001"}'
-```
-
-Kết quả: `ledger_status: APPROVED`, `disbursement` có `contract_code` (HDTD-YYYYMMDD-XXXX), `ledger_hash` (SHA-256).
-
-## Bước 5: Replay approval → không double disburse
-
-```bash
-curl -s -X POST http://localhost:8000/predict/graph/{thread_id}/approve \
-  -H "Content-Type: application/json" \
-  -H "X-CreditFlow-API-Key: demo-key" \
-  -d '{"action": "approve", "idempotency_key": "demo-001"}'
-```
-
-Kết quả: `replay: true`, cùng contract_code, số dòng disbursement không đổi.
-
-## Bước 6: Xem audit trail
-
-```bash
-curl -s http://localhost:8000/audit/{application_id}
-```
-
-## Bước 7: Chạy toàn bộ test suite
-
-```bash
-python -m pytest tests/ -q
-# Kết quả mong đợi: 621 passed, 3 skipped (trên PostgreSQL)
-```
-
-## Bước 8: Ruff check
-
-```bash
-ruff check .
-# Kết quả mong đợi: 0 errors
-```
-
-## Các điểm nhấn để trình bày phỏng vấn
-
-| Điểm | Nơi chứng minh |
-|---|---|
-| ML scoring có business-cost threshold (t=0.20) | `pipeline/modeling/train.py`, `gate8a_model_quality.py` |
-| LangGraph 12-node state machine, REVIEW interrupt | `pipeline/agent/graph.py`, `pipeline/agent/nodes.py` |
-| Maker-checker, idempotency, disbursement ledger | `backend/app.py` (approve endpoint), `pipeline/disbursement/core_banking.py` |
-| Tamper-evident SHA-256 ledger hash | `backend/app.py` (disbursement ledger_hash) |
-| Mock OIDC IdP (RS256, JWKS, group→role) | `scripts/mock_oidc_idp.py`, `tests/test_mock_oidc_idp.py` |
-| Encrypted PostgreSQL storage (pgcrypto, fail-closed) | `pipeline/storage/encryption.py`, `pipeline/storage/ledger.py` |
-| Model validation (backtest, ECE, subgroup) | `scripts/model_validation.py`, `tests/test_model_validation.py` |
-| Backup/restore drill (RPO 15p, RTO 4h) | `scripts/backup_restore.py`, `tests/test_backup_restore_drill.py` |
-
-## Giới hạn trung thực (không claim)
-
-- Dữ liệu là synthetic (5k dòng, seed 42), không phải hồ sơ khách hàng thật.
-- `execute()` là mô phỏng core banking, không chuyển tiền thật.
-- Chưa kết nối Sacombank IdP thật, chưa deploy production từ máy này (AKS private-link).
-- Không claim là hệ thống lending production của Sacombank.
+In an interview, explain why the idempotency record is checked **after**
+authentication/authority but **before** refusing an already approved
+application. A different key against a terminal application still returns
+HTTP 409, and a replay with a conflicting action is rejected. The replay test
+asserts no second disbursement row is created.
