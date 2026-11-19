@@ -27,6 +27,9 @@ COPY backend/ ./backend/
 COPY pipeline/ ./pipeline/
 COPY models/ ./models/
 
+# Fail the image build if an eagerly imported API dependency is missing.
+RUN python -c "import backend.app"
+
 RUN useradd --create-home --uid 10002 creditflow \
     && chown -R creditflow:creditflow /app
 USER creditflow
