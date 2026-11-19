@@ -38,6 +38,7 @@ def test_runner_checks_review_replay_and_single_disbursement(monkeypatch):
         raise AssertionError(path)
 
     monkeypatch.setattr(demo, "request", fake_request)
+    monkeypatch.setattr(demo, "wait_for_health", lambda port: None)
     report = demo.run(18081, "local-test-key")
     assert report["complete"] is True
     assert report["disbursement_count_after"] == 1
@@ -72,3 +73,22 @@ def test_request_reads_local_success_and_http_error(monkeypatch):
     assert demo.request("http://127.0.0.1:18081", "/predict/graph", "key", {}) == (
         409, {"detail": "conflict"},
     )
+
+
+def test_wait_for_health_retries_until_local_api_responds(monkeypatch):
+    attempts = 0
+
+    class Healthy(io.BytesIO):
+        status = 200
+
+    def fake_open(_url, timeout):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("connection refused")
+        return Healthy()
+
+    monkeypatch.setattr(demo, "urlopen", fake_open)
+    monkeypatch.setattr(demo.time, "sleep", lambda _seconds: None)
+    demo.wait_for_health(18081)
+    assert attempts == 2

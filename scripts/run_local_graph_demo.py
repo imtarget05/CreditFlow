@@ -10,7 +10,7 @@ import subprocess
 import time
 import uuid
 from datetime import UTC, datetime
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 PROFILE = {
@@ -23,6 +23,19 @@ PROFILE = {
     "credit_history": 9.0,
     "previous_defaults": 1,
 }
+
+
+def wait_for_health(port: int, timeout_seconds: float = 30.0) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            with urlopen(f"http://127.0.0.1:{port}/health/live", timeout=2) as response:
+                if response.status == 200:
+                    return
+        except (OSError, URLError):
+            pass
+        time.sleep(0.5)
+    raise TimeoutError("Local CreditFlow API did not become healthy")
 
 
 def request(base_url: str, path: str, api_key: str, body: dict | None = None) -> tuple[int, dict]:
@@ -52,6 +65,7 @@ def run(port: int, api_key: str) -> dict:
         raise ValueError("CREDITFLOW_API_KEY is required for the approval and evidence routes")
     if os.environ.get("CREDITFLOW_ENV", "").lower() == "production":
         raise ValueError("Refusing a synthetic workflow demo in production mode")
+    wait_for_health(port)
 
     before_status, before = request(base_url, "/api/disbursements", api_key)
     started_at = time.monotonic()
