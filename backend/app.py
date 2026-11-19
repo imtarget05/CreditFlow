@@ -826,7 +826,7 @@ def approve_graph_workflow(
     )
 
     persisted = get_application_by_thread(thread_id)
-    if persisted is None or persisted.get("status") != STATUS_PENDING_REVIEW:
+    if persisted is None:
         raise HTTPException(status_code=409, detail="APPLICATION_NOT_PENDING")
     action_approved = req.action.strip().lower() in (
         "approve", "approved", "accept", "yes",
@@ -838,9 +838,13 @@ def approve_graph_workflow(
     # without resuming the graph or disbursing twice.
     replayed = find_idempotent_approval(thread_id, idem_key)
     if replayed is not None:
+        if not action_approved:
+            raise HTTPException(status_code=409, detail="IDEMPOTENCY_KEY_CONFLICT")
         replayed = dict(replayed)
         replayed["replay"] = True
         return replayed
+    if persisted.get("status") != STATUS_PENDING_REVIEW:
+        raise HTTPException(status_code=409, detail="APPLICATION_NOT_PENDING")
     if not action_approved:
         try:
             update_application_status(

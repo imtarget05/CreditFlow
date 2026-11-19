@@ -161,6 +161,43 @@ def test_e2e_submit_review_approve_creates_contract_and_disbursement(
 
 
 @pytest.mark.slow
+def test_approval_replay_after_terminal_status_returns_stored_result_without_second_disbursement(
+    client, ledger_env
+):
+    _profile, started = _start_review_workflow(client)
+    thread_id = started["thread_id"]
+    path = f"/predict/graph/{thread_id}/approve"
+    request = {"action": "approve", "idempotency_key": "local-replay-test"}
+
+    first = client.post(path, json=request, headers=AUTH_HEADERS)
+    assert first.status_code == 200, first.text
+    before = list_disbursements()
+    assert len(before) == 1
+
+    replay = client.post(path, json=request, headers=AUTH_HEADERS)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["replay"] is True
+    assert replay.json()["disbursement"]["id"] == first.json()["disbursement"]["id"]
+    assert len(list_disbursements()) == len(before)
+
+    conflicting_action = client.post(
+        path,
+        json={"action": "reject", "idempotency_key": "local-replay-test"},
+        headers=AUTH_HEADERS,
+    )
+    assert conflicting_action.status_code == 409
+    assert conflicting_action.json()["detail"] == "IDEMPOTENCY_KEY_CONFLICT"
+
+    different_key = client.post(
+        path,
+        json={"action": "approve", "idempotency_key": "different-key"},
+        headers=AUTH_HEADERS,
+    )
+    assert different_key.status_code == 409
+    assert len(list_disbursements()) == len(before)
+
+
+@pytest.mark.slow
 def test_e2e_reject_flow_writes_no_disbursement(client, ledger_env):
     _profile, started = _start_review_workflow(client)
     thread_id = started["thread_id"]
