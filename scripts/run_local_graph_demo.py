@@ -69,6 +69,12 @@ def run(base_url: str, api_key: str) -> dict:
     approval = {"action": "approve", "idempotency_key": idem_key}
     approve_status, approved = request(base_url, f"/predict/graph/{thread_id}/approve", api_key, approval)
     replay_status, replayed = request(base_url, f"/predict/graph/{thread_id}/approve", api_key, approval)
+    conflict_status, conflict = request(base_url, f"/predict/graph/{thread_id}/approve", api_key, {
+        "action": "reject", "idempotency_key": idem_key,
+    })
+    different_key_status, _ = request(base_url, f"/predict/graph/{thread_id}/approve", api_key, {
+        "action": "approve", "idempotency_key": "other-" + uuid.uuid4().hex,
+    })
     after_status, after = request(base_url, "/api/disbursements", api_key)
     audit_status, audit = request(base_url, f"/audit/{thread_id}", api_key)
     disbursement = approved.get("disbursement") or {}
@@ -80,6 +86,8 @@ def run(base_url: str, api_key: str) -> dict:
     assert len(disbursement.get("ledger_hash", "")) == 64
     assert replayed.get("replay") is True
     assert (replayed.get("disbursement") or {}).get("id") == disbursement["id"]
+    assert conflict_status == 409 and conflict.get("detail") == "IDEMPOTENCY_KEY_CONFLICT"
+    assert different_key_status == 409
     assert after["count"] == before["count"] + 1
     assert len(matching) == 1 and matching[0].get("hash_valid") is True
 
@@ -97,6 +105,8 @@ def run(base_url: str, api_key: str) -> dict:
         "ledger_status": approved["ledger_status"],
         "replay_status": replay_status,
         "replay": replayed["replay"],
+        "conflicting_action_status": conflict_status,
+        "different_key_after_terminal_status": different_key_status,
         "disbursement_count_before": before["count"],
         "disbursement_count_after": after["count"],
         "matching_disbursement_rows": len(matching),

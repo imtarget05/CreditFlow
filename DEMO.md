@@ -26,8 +26,9 @@ docker stop creditflow-graph-demo
 The runner checks a paused `REVIEW`, approval by the configured local reviewer,
 an `APPROVED` application, one completed disbursement, a 64-character ledger
 hash, the same disbursement on replay, and an audit decision. It verifies
-`hash_valid` on the ledger read. The local key is a throwaway demo value and
-must never be used for a deployment. The container's SQLite ledger and graph
+`hash_valid` on the ledger read. It also checks that a conflicting action or a
+different key after approval returns HTTP 409. The local key is a throwaway
+demo value and must never be used for a deployment. The container's SQLite ledger and graph
 checkpoint are disposable when stopped.
 
 The flow is single-process and uses a bundled model trained on synthetic proxy
