@@ -18,6 +18,13 @@ Designed with enterprise requirements in mind, it features tamper-evident audit 
 
 ## 🚦 Deployment status (last external audit 2026-10-09)
 
+**Local-first portfolio status (2026-11-19):** [The Docker API demo](docs/evidence/local-api-2026-11-19.md)
+passed 14 synthetic HTTP cases on localhost with the model-compatible runtime.
+Main CI and GHCR image build passed on the evidence commit. Cloud CD now starts
+only via manual workflow dispatch; a green CI or image build does not mean Azure,
+Render, or the public frontend is healthy. Run cloud deployment only when its
+resources and credentials are intentionally available.
+
 **Enterprise transition in progress (2026-11-03):** `CREDITFLOW_ENV=production` now requires OIDC configuration and a machine API key at startup. Human routes accept only IdP-signed bearer tokens; the shared key is reserved for the scheduled monitoring job. The public portfolio frontend remains a synthetic demo and is not an authenticated bank staff portal. No real lending decision or payment rail is approved. Revalidate deployment URLs after these changes; the table below is historical evidence only.
 
 | Component | URL | State |
