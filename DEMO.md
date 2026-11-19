@@ -18,8 +18,7 @@ docker run --rm -d --name creditflow-graph-demo \
   creditflow-api-graph-demo
 CREDITFLOW_API_KEY=local-graph-demo-only \
   python3 scripts/run_local_graph_demo.py \
-  --base-url http://127.0.0.1:18081 \
-  --output /tmp/creditflow-graph-demo.json
+  --port 18081 > /tmp/creditflow-graph-demo.json
 docker stop creditflow-graph-demo
 ```
 

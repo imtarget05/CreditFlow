@@ -5,13 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import time
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 PROFILE = {
@@ -27,6 +26,8 @@ PROFILE = {
 
 
 def request(base_url: str, path: str, api_key: str, body: dict | None = None) -> tuple[int, dict]:
+    if not re.fullmatch(r"/(?:api/disbursements|predict/graph(?:/run-[a-f0-9]{12}/approve)?|audit/run-[a-f0-9]{12})", path):
+        raise ValueError("Unexpected demo API path")
     headers = {"X-CreditFlow-API-Key": api_key}
     if body is not None:
         headers["Content-Type"] = "application/json"
@@ -43,15 +44,10 @@ def request(base_url: str, path: str, api_key: str, body: dict | None = None) ->
         return exc.code, json.load(exc)
 
 
-def run(base_url: str, api_key: str) -> dict:
-    parsed = urlparse(base_url)
-    if (
-        parsed.scheme != "http"
-        or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
-        or parsed.username or parsed.password or parsed.path not in {"", "/"}
-        or parsed.query or parsed.fragment
-    ):
-        raise ValueError("Only an HTTP localhost API is allowed")
+def run(port: int, api_key: str) -> dict:
+    if port < 1024 or port > 65535:
+        raise ValueError("Port must be between 1024 and 65535")
+    base_url = f"http://127.0.0.1:{port}"
     if not api_key:
         raise ValueError("CREDITFLOW_API_KEY is required for the approval and evidence routes")
     if os.environ.get("CREDITFLOW_ENV", "").lower() == "production":
@@ -65,6 +61,8 @@ def run(base_url: str, api_key: str) -> dict:
         raise RuntimeError(f"Expected a paused REVIEW; received HTTP {start_status}, {start.get('decision')}")
 
     thread_id = start["thread_id"]
+    if not isinstance(thread_id, str) or not re.fullmatch(r"run-[a-f0-9]{12}", thread_id):
+        raise ValueError("Unexpected thread ID returned by local API")
     idem_key = "local-demo-" + uuid.uuid4().hex
     approval = {"action": "approve", "idempotency_key": idem_key}
     approve_status, approved = request(base_url, f"/predict/graph/{thread_id}/approve", api_key, approval)
@@ -119,13 +117,9 @@ def run(base_url: str, api_key: str) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-url", default="http://127.0.0.1:18081")
-    parser.add_argument("--output", type=Path)
+    parser.add_argument("--port", type=int, default=18081)
     args = parser.parse_args()
-    report = run(args.base_url.rstrip("/"), os.environ.get("CREDITFLOW_API_KEY", ""))
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report, indent=2) + "\n")
+    report = run(args.port, os.environ.get("CREDITFLOW_API_KEY", ""))
     print(json.dumps(report, indent=2))
 
 
