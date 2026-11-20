@@ -1,4 +1,6 @@
 import pytest
+import json
+import sys
 
 from scripts import benchmark_local_graph as bench
 
@@ -38,3 +40,26 @@ def test_benchmark_counts_failures_and_separates_latency_phases(monkeypatch):
 def test_benchmark_rejects_invalid_case_count(count):
     with pytest.raises(ValueError, match="cases must"):
         bench.benchmark(18084, "local-key", count)
+
+
+def test_cli_prints_complete_raw_report(monkeypatch, capsys):
+    monkeypatch.setenv("CREDITFLOW_API_KEY", "local-key")
+    monkeypatch.setattr(sys, "argv", ["benchmark", "--port", "18084", "--cases", "2"])
+    monkeypatch.setattr(bench, "benchmark", lambda port, key, cases: {
+        "total_cases": cases, "completed_cases": cases, "results": [{"complete": True}] * cases,
+    })
+    bench.main()
+    report = json.loads(capsys.readouterr().out)
+    assert report["total_cases"] == 2
+    assert len(report["results"]) == 2
+
+
+def test_cli_fails_when_any_case_incomplete(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["benchmark", "--cases", "2"])
+    monkeypatch.setattr(bench, "benchmark", lambda port, key, cases: {
+        "total_cases": cases, "completed_cases": 1, "results": [{"complete": True}, {"complete": False}],
+    })
+    with pytest.raises(SystemExit) as error:
+        bench.main()
+    assert error.value.code == 1
+    assert json.loads(capsys.readouterr().out)["completed_cases"] == 1
