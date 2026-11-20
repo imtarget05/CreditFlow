@@ -1,0 +1,14 @@
+# CreditFlow: five-minute interview walkthrough
+
+Use [DEMO.md](../DEMO.md) to start the localhost API and run `scripts/run_local_graph_demo.py`. The [raw graph run](evidence/local-graph-demo-2026-11-19.json), [restart run](evidence/local-restart-drill-2026-11-20.json), and [20-case timing](evidence/local-graph-benchmark-20-2026-11-20.json) are separate evidence; do not mix their timings.
+
+| Time | Show and explain |
+| --- | --- |
+| 0:00–0:45 | Submit the synthetic review profile to `POST /predict/graph`. Point to `REVIEW`, `approval_required=true`, the generated thread ID, and `RISK_COMMITTEE_L2`. The bundled model is trained on synthetic proxy data, so this is a software control demonstration, not a bank-approved underwriting result. |
+| 0:45–1:30 | Open `pipeline/agent/graph.py`: the graph pauses at human approval. `backend/app.py::approve_graph_workflow` derives the approver from the authenticated API key and checks the authority the workflow demanded. A caller-supplied `approver_id` cannot impersonate another reviewer. |
+| 1:30–2:30 | Approve with an idempotency key. Show one completed disbursement and its ledger hash. Replay the **same action and key**: response has `replay=true` and the same disbursement ID. A conflicting action using the same key and a new key after terminal approval both return HTTP 409. Explain that the replay lookup follows authentication/authority and precedes the terminal-state guard. |
+| 2:30–3:15 | Read `/audit/{thread_id}` and `/api/disbursements`. The demo asserts `APPROVE`, one new row, and `hash_valid=true`. Rejecting a separate pending application yields `REJECTED` and zero disbursements. These are local SQLite records, not money movement through a bank. |
+| 3:15–4:00 | Run `scripts/run_restart_drill.py`: it restarts the one Docker container before approval and after approval while keeping checkpoint and ledger files on a bind mount. The same-key replay still returns one disbursement. This proves persistence for one container; it does not prove multi-replica coordination. |
+| 4:00–5:00 | Discuss failures and trade-offs. An injected ledger write failure returns HTTP 502, and retry with the same key completes the ledger once; a rejection-write failure leaves `PENDING_REVIEW`. The [20-case benchmark](evidence/local-graph-benchmark-20-2026-11-20.md) reports 20/20 completed, p50/p95 595.5/1165 ms for the full sequential workflow, and `template` explanation in all cases. No live LLM latency, Azure dependency, external ledger transaction, or real-user traffic is claimed. |
+
+Verification paths: `tests/test_e2e_disbursement.py`, `tests/test_approval_idempotency.py`, and `tests/test_restart_drill_runner.py`. The main CI for commit `b6bb6e2872c9535f64a8f6f2531a83d8a2f799c9` passed in [run 44695464272](https://github.com/imtarget05/CreditFlow/actions/runs/44695464272).
