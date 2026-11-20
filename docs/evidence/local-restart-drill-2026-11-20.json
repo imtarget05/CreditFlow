@@ -1,0 +1,17 @@
+{
+  "timestamp_utc": "2026-11-20T05:20:09.783131+00:00",
+  "source_sha": "f90db1ed981c3074799531e1f14a8afdc7f8448e",
+  "docker_image_id": "sha256:9bd310b86c59265f932aa31a1a182afe6421be04d335b04c15229ede257c683a",
+  "scope": "Synthetic single-container localhost API; both checkpoint and ledger on a persistent bind mount",
+  "initial_decision": "REVIEW",
+  "restart_before_approval": true,
+  "approval_http_status": 200,
+  "restart_after_approval": true,
+  "replay_http_status": 200,
+  "replay": true,
+  "disbursement_count_delta": 1,
+  "matching_disbursement_rows": 1,
+  "ledger_hash_valid": true,
+  "audit_decision": "APPROVE",
+  "checkpoint_scope": "single-container persistent file, not multi-replica shared storage"
+}
