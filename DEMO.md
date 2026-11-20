@@ -67,3 +67,19 @@ authentication/authority but **before** refusing an already approved
 application. A different key against a terminal application still returns
 HTTP 409, and a replay with a conflicting action is rejected. The replay test
 asserts no second disbursement row is created.
+
+The end-to-end suite also injects a ledger outage after approval. The API
+returns HTTP 502 instead of claiming a completed disbursement; retrying the
+same idempotency key completes the ledger write once and restores the approval
+audit. A separate injected rejection-write failure returns HTTP 502 while the
+application stays `PENDING_REVIEW`. Run these cases in the pinned API image:
+
+```sh
+docker build -f Dockerfile.api -t creditflow-api-test .
+docker run --rm --user root -v "$PWD":/work -w /work -e PYTHONPATH=/work \
+  --entrypoint sh creditflow-api-test -c \
+  'pip install -q pytest httpx && python -m pytest -q tests/test_e2e_disbursement.py'
+```
+
+This is a local ledger failure drill. It does not establish atomicity across
+an external bank ledger or multiple API replicas.

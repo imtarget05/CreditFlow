@@ -111,7 +111,8 @@ jobs:
 
   coverage:
     # Coverage ratchet, phase 3: baseline locked 2026-10-08 at TOTAL 80%
-    # (fast suite: 413 passed, 2 skipped). Gate set at 75% (5pt buffer) with
+    # (fast suite: 413 passed, 2 skipped). Fast and slow workflow tests now
+    # contribute to the Sonar report. Gate set at 75% (5pt buffer) with
     # --cov-fail-under=75 so real backslides fail loudly; raise toward 80%
     # once gateway/statement-parser gaps (55-62%) are covered. No codecov
     # upload: coverage.xml kept as a CI artifact instead.
@@ -132,11 +133,11 @@ jobs:
           pip install -r requirements-dev.txt
           pip install pytest-cov
 
-      - name: Run tests with coverage (fast only)
+      - name: Run fast and slow workflow tests with coverage
         # Include operational scripts and DAGs in the Sonar report. The
         # established 75% ratchet below still measures the original core
         # backend/pipeline/src scope, so broadening the report cannot weaken it.
-        run: python -m pytest tests/ airflow/tests/ -q -m "not integration and not slow and not live and not infra" --strict-markers --cov=pipeline --cov=backend --cov=src --cov=scripts --cov=airflow --cov-report=term-missing --cov-report=xml
+        run: python -m pytest tests/ airflow/tests/ -q -m "not integration and not live and not infra" --strict-markers --cov=pipeline --cov=backend --cov=src --cov=scripts --cov=airflow --cov-report=term-missing --cov-report=xml
 
       - name: Enforce core coverage ratchet
         run: python -m coverage report --include='backend/*,pipeline/*,src/*' --fail-under=75

@@ -198,6 +198,111 @@ def test_approval_replay_after_terminal_status_returns_stored_result_without_sec
 
 
 @pytest.mark.slow
+def test_ledger_failure_returns_error_then_same_key_retry_finishes_once(
+    client, ledger_env, monkeypatch
+):
+    from backend import app as app_module
+
+    _profile, started = _start_review_workflow(client)
+    thread_id = started["thread_id"]
+    path = f"/predict/graph/{thread_id}/approve"
+    request = {"action": "approve", "idempotency_key": "ledger-recovery-test"}
+    real_record = app_module.record_disbursement
+    calls = 0
+
+    def fail_twice(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            raise OSError("simulated ledger outage")
+        return real_record(**kwargs)
+
+    monkeypatch.setattr(app_module, "record_disbursement", fail_twice)
+    first = client.post(path, json=request, headers=AUTH_HEADERS)
+    assert first.status_code == 502, first.text
+    assert first.json()["detail"] == "LEDGER_DISBURSEMENT_FAILED"
+    assert list_disbursements() == []
+
+    still_down = client.post(path, json=request, headers=AUTH_HEADERS)
+    assert still_down.status_code == 502
+    assert list_disbursements() == []
+
+    retry = client.post(path, json=request, headers=AUTH_HEADERS)
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["replay"] is True
+    assert retry.json()["disbursement"]["status"] == "COMPLETED"
+    assert len(list_disbursements()) == 1
+    assert get_application_by_thread(thread_id)["decision"] == "APPROVE"
+
+    repeated = client.post(path, json=request, headers=AUTH_HEADERS)
+    assert repeated.status_code == 200
+    assert repeated.json()["disbursement"]["id"] == retry.json()["disbursement"]["id"]
+    assert len(list_disbursements()) == 1
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("failure", ["exception", "missing_row"])
+def test_rejection_ledger_failure_does_not_report_success(client, ledger_env, monkeypatch, failure):
+    from backend import app as app_module
+
+    _profile, started = _start_review_workflow(client)
+    thread_id = started["thread_id"]
+
+    def fail_status(*args, **kwargs):
+        if failure == "exception":
+            raise OSError("simulated ledger outage")
+        return False
+
+    monkeypatch.setattr(app_module, "update_application_status", fail_status)
+    response = client.post(
+        f"/predict/graph/{thread_id}/approve",
+        json={"action": "reject"},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"] == "LEDGER_REJECTION_FAILED"
+    assert get_application_by_thread(thread_id)["status"] == "PENDING_REVIEW"
+    assert list_disbursements() == []
+
+
+@pytest.mark.slow
+def test_disbursement_written_but_status_update_fails_retry_reuses_row(
+    client, ledger_env, monkeypatch
+):
+    from backend import app as app_module
+
+    _profile, started = _start_review_workflow(client)
+    thread_id = started["thread_id"]
+    path = f"/predict/graph/{thread_id}/approve"
+    request = {"action": "approve", "idempotency_key": "status-recovery-test"}
+    real_update = app_module.update_application_status
+    calls = 0
+
+    def fail_twice(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            raise OSError("simulated status-write outage")
+        return real_update(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, "update_application_status", fail_twice)
+    first = client.post(path, json=request, headers=AUTH_HEADERS)
+    assert first.status_code == 502
+    disbursement = list_disbursements()
+    assert len(disbursement) == 1
+
+    still_down = client.post(path, json=request, headers=AUTH_HEADERS)
+    assert still_down.status_code == 502
+    assert still_down.json()["detail"] == "LEDGER_APPROVAL_FINALIZE_FAILED"
+    assert len(list_disbursements()) == 1
+
+    retry = client.post(path, json=request, headers=AUTH_HEADERS)
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["disbursement"]["id"] == disbursement[0]["id"]
+    assert len(list_disbursements()) == 1
+    assert get_application_by_thread(thread_id)["decision"] == "APPROVE"
+
+@pytest.mark.slow
 def test_e2e_reject_flow_writes_no_disbursement(client, ledger_env):
     _profile, started = _start_review_workflow(client)
     thread_id = started["thread_id"]
