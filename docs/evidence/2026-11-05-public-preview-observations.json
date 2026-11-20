@@ -1,0 +1,81 @@
+{
+  "method": "Python urllib.request GET of public URLs; body SHA-256 and release metadata extracted from response",
+  "results": [
+    {
+      "observed_at_utc": "2026-11-05T06:31:54.574383+00:00",
+      "repo": "AKS-SRE-Platform",
+      "environment": "preview",
+      "url": "https://328cb431.aks-sre-platform.pages.dev/",
+      "final_url": "https://328cb431.aks-sre-platform.pages.dev/",
+      "http_status": 200,
+      "response_sha256": "f2083cf6bc59954b7622b9f3612949867a64f81e2a5e4c6a1cebea5130c69af4",
+      "response_bytes": 49910,
+      "source_sha": "185ddbbda188dfa8c6eff581fa83a80f96238939",
+      "metadata_name": "release-sha",
+      "metadata_value": "185ddbbda188dfa8c6eff581fa83a80f96238939",
+      "metadata_matches_sha": true
+    },
+    {
+      "observed_at_utc": "2026-11-05T06:31:55.054242+00:00",
+      "repo": "QuanLyKho",
+      "environment": "preview",
+      "url": "https://c7f29aa4.quan-ly-kho-tra-sua.pages.dev/",
+      "final_url": "https://c7f29aa4.quan-ly-kho-tra-sua.pages.dev/",
+      "http_status": 200,
+      "response_sha256": "81231efa482318da352a4d24c301140849613371c6ec1d602192e0e010413554",
+      "response_bytes": 11352,
+      "source_sha": "de82a6d90f48c78dc861c08d815b134e8a1b6c3b",
+      "metadata_name": "app-build-number",
+      "metadata_value": "de82a6d90f48c78dc861c08d815b134e8a1b6c3b",
+      "metadata_matches_sha": true
+    },
+    {
+      "observed_at_utc": "2026-11-05T06:31:55.303198+00:00",
+      "repo": "CreditFlow",
+      "environment": "preview",
+      "url": "https://f9933cc8.creditflow-1cg.pages.dev/",
+      "final_url": "https://f9933cc8.creditflow-1cg.pages.dev/",
+      "http_status": 200,
+      "response_sha256": "fbf99448f0bab1a8aeda530fda2d2a8b9ebaca212455fe5c0750e99039f3f20d",
+      "response_bytes": 963,
+      "source_sha": "3a5b0c8af520c2585fd755d2defb2c80eaeece37",
+      "metadata_name": "release-sha",
+      "metadata_value": "3a5b0c8af520c2585fd755d2defb2c80eaeece37",
+      "metadata_matches_sha": true,
+      "api_release_metadata": "unverified"
+    },
+    {
+      "observed_at_utc": "2026-11-05T06:31:56.115451+00:00",
+      "repo": "AKS-SRE-Platform",
+      "environment": "render-mirror",
+      "url": "https://sre-demo-api.onrender.com/health/live",
+      "final_url": "https://sre-demo-api.onrender.com/health/live",
+      "http_status": 200,
+      "response_sha256": "9b25325594ed0c2277cb41c67c48a537993e25446c60e3199b1a615f2f7dc89b",
+      "response_bytes": 36,
+      "source_sha": "185ddbbda188dfa8c6eff581fa83a80f96238939",
+      "health_body": {
+        "status": "live",
+        "uptime_s": 253.084
+      },
+      "release_sha_in_response": null
+    },
+    {
+      "observed_at_utc": "2026-11-05T06:33:29.875327+00:00",
+      "repo": "QuanLyKho",
+      "environment": "modal-api-health",
+      "url": "https://imtarget05--quan-ly-kho-tra-sua-api.us-east.modal.run/api/v1/health/live",
+      "final_url": "https://imtarget05--quan-ly-kho-tra-sua-api.us-east.modal.run/api/v1/health/live",
+      "http_status": 200,
+      "response_sha256": "3fa5f334615b40570b640fedbce72b5f18a88f892a0eb3f884a02c47508bc5a0",
+      "response_bytes": 83,
+      "source_sha": null,
+      "health_body": {
+        "status": "alive",
+        "timestamp": "2026-11-05T06:33:29.724663+00:00",
+        "version": "0.1.0"
+      },
+      "release_sha_in_response": null
+    }
+  ]
+}
