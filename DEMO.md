@@ -30,6 +30,23 @@ different key after approval returns HTTP 409. The local key is a throwaway
 demo value and must never be used for a deployment. The container's SQLite ledger and graph
 checkpoint are disposable when stopped.
 
+### Restart drill (persistent local state)
+
+Build the image from this checkout, then run one command. The script starts a
+fresh Docker container, bind-mounts a temporary directory for both the graph
+checkpoint and SQLite ledger, restarts before approval, approves, restarts
+again, and verifies replay, one ledger row and audit. It cleans up the
+container and temporary directory afterward.
+
+```sh
+docker build -f Dockerfile.api -t creditflow-restart-drill:20261120 .
+python3 scripts/run_restart_drill.py --port 18083 > /tmp/creditflow-restart-drill.json
+```
+
+The measured [restart evidence](docs/evidence/local-restart-drill-2026-11-20.md)
+proves state survives restarts of one container with a persistent local mount.
+It does not prove shared, multi-replica consistency or real loan servicing.
+
 The flow is single-process and uses a bundled model trained on synthetic proxy
 data. A model score or APPROVE outcome is **not** validated for real lending.
 `CREDITFLOW_ALLOW_ANONYMOUS_DEMO=1` is accepted only outside production, and
