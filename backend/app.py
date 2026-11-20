@@ -843,16 +843,24 @@ def approve_graph_workflow(
         replayed = dict(replayed)
         replayed["replay"] = True
         return replayed
-    if persisted.get("status") != STATUS_PENDING_REVIEW:
+    reserved_replay = (
+        action_approved
+        and persisted.get("status") == STATUS_APPROVED
+        and persisted.get("idempotency_key") == idem_key
+    )
+    if persisted.get("status") != STATUS_PENDING_REVIEW and not reserved_replay:
         raise HTTPException(status_code=409, detail="APPLICATION_NOT_PENDING")
     if not action_approved:
         try:
-            update_application_status(
+            updated = update_application_status(
                 thread_id, STATUS_REJECTED, decision="REJECT",
                 audit_trail=(persisted.get("audit_trail") or []),
             )
-        except Exception:  # noqa: BLE001
+            if not updated:
+                raise RuntimeError("Application disappeared during rejection")
+        except Exception as exc:  # noqa: BLE001
             metrics.error()
+            raise HTTPException(status_code=502, detail="LEDGER_REJECTION_FAILED") from exc
         return {
             "thread_id": thread_id,
             "application_id": persisted.get("application_id", ""),
@@ -894,6 +902,29 @@ def approve_graph_workflow(
              if d.get("idempotency_key") == idem_key),
             None,
         )
+        if match is None:
+            # Reservation may have committed before the ledger write failed.
+            # Retry the same key without resuming the graph a second time.
+            try:
+                match = record_disbursement(
+                    application_id=reservation["application_id"],
+                    loan_amount=float(persisted["customer_data"].get("loan_amount", 0.0)),
+                    idempotency_key=idem_key,
+                )
+            except Exception as exc:  # noqa: BLE001
+                metrics.error()
+                raise HTTPException(status_code=502, detail="LEDGER_DISBURSEMENT_FAILED") from exc
+        try:
+            final_state = graph.get_state(config=run_config).values
+            updated = update_application_status(
+                thread_id, STATUS_APPROVED, decision="APPROVE",
+                audit_trail=final_state.get("audit_trail", []),
+            )
+            if not updated:
+                raise RuntimeError("Application disappeared during replay")
+        except Exception as exc:  # noqa: BLE001
+            metrics.error()
+            raise HTTPException(status_code=502, detail="LEDGER_APPROVAL_FINALIZE_FAILED") from exc
         return {
             "thread_id": thread_id,
             "application_id": persisted.get("application_id", ""),
@@ -934,20 +965,23 @@ def approve_graph_workflow(
     disbursement = None
     try:
         app_row = get_application_by_thread(thread_id)
-        if app_row is not None:
-            disbursement = record_disbursement(
-                application_id=app_row["id"],
-                loan_amount=float(app_row["customer_data"].get("loan_amount", 0.0)),
-                idempotency_key=idem_key,
-            )
-            update_application_status(
-                thread_id, STATUS_APPROVED,
-                decision=result.get("decision", "APPROVE"),
-                audit_trail=result.get("audit_trail", []),
-            )
-    except Exception:  # noqa: BLE001
+        if app_row is None:
+            raise RuntimeError("Application disappeared before disbursement")
+        disbursement = record_disbursement(
+            application_id=app_row["id"],
+            loan_amount=float(app_row["customer_data"].get("loan_amount", 0.0)),
+            idempotency_key=idem_key,
+        )
+        updated = update_application_status(
+            thread_id, STATUS_APPROVED,
+            decision=result.get("decision", "APPROVE"),
+            audit_trail=result.get("audit_trail", []),
+        )
+        if not updated:
+            raise RuntimeError("Application disappeared after disbursement")
+    except Exception as exc:  # noqa: BLE001
         metrics.error()
-        disbursement = None
+        raise HTTPException(status_code=502, detail="LEDGER_DISBURSEMENT_FAILED") from exc
 
     response = {
         "thread_id": thread_id,
