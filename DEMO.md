@@ -54,7 +54,7 @@ demo key, run:
 
 ```sh
 python3 -m scripts.benchmark_local_graph --port 18084 --cases 20 \
-  --output /tmp/creditflow-graph-benchmark.json
+  > /tmp/creditflow-graph-benchmark.json
 ```
 
 The [20-case local result](docs/evidence/local-graph-benchmark-20-2026-11-20.md)

@@ -14,7 +14,8 @@ def test_benchmark_counts_failures_and_separates_latency_phases(monkeypatch):
     def fake_run(port, key):
         nonlocal calls
         calls += 1
-        assert port == 18084 and key == "local-key"
+        assert port == 18084
+        assert key == "local-key"
         if calls == 2:
             raise RuntimeError("simulated outage")
         return {
@@ -31,3 +32,9 @@ def test_benchmark_counts_failures_and_separates_latency_phases(monkeypatch):
     assert report["full_workflow_p95_ms"] == 30
     assert report["approval_p95_ms"] == 6
     assert report["results"][1]["complete"] is False
+
+
+@pytest.mark.parametrize("count", [0, 101])
+def test_benchmark_rejects_invalid_case_count(count):
+    with pytest.raises(ValueError, match="cases must"):
+        bench.benchmark(18084, "local-key", count)

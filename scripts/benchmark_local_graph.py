@@ -5,10 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import statistics
 from datetime import UTC, datetime
-from pathlib import Path
 
 from scripts.run_local_graph_demo import run
 
@@ -56,12 +54,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=18084)
     parser.add_argument("--cases", type=int, default=20)
-    parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    import os
+
     result = benchmark(args.port, os.environ.get("CREDITFLOW_API_KEY", ""), args.cases)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(json.dumps({key: value for key, value in result.items() if key != "results"}, indent=2))
+    print(json.dumps(result, indent=2, ensure_ascii=False))
     if result["completed_cases"] != args.cases:
         raise SystemExit(1)
 
