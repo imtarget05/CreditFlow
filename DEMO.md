@@ -47,6 +47,20 @@ The measured [restart evidence](docs/evidence/local-restart-drill-2026-11-20.md)
 proves state survives restarts of one container with a persistent local mount.
 It does not prove shared, multi-replica consistency or real loan servicing.
 
+### Repeated workflow latency
+
+With the local API container running and `CREDITFLOW_API_KEY` set to its local
+demo key, run:
+
+```sh
+python3 -m scripts.benchmark_local_graph --port 18084 --cases 20 \
+  > /tmp/creditflow-graph-benchmark.json
+```
+
+The [20-case local result](docs/evidence/local-graph-benchmark-20-2026-11-20.md)
+separates start, approval and full workflow latency, task completion and
+explanation source. It is a sequential synthetic benchmark, not bank traffic.
+
 The flow is single-process and uses a bundled model trained on synthetic proxy
 data. A model score or APPROVE outcome is **not** validated for real lending.
 `CREDITFLOW_ALLOW_ANONYMOUS_DEMO=1` is accepted only outside production, and

@@ -68,6 +68,7 @@ def run(port: int, api_key: str) -> dict:
     wait_for_health(port)
 
     before_status, before = request(base_url, "/api/disbursements", api_key)
+    workflow_started_at = time.monotonic()
     started_at = time.monotonic()
     start_status, start = request(base_url, "/predict/graph", api_key, {"customer_data": PROFILE})
     start_ms = round((time.monotonic() - started_at) * 1000)
@@ -79,7 +80,9 @@ def run(port: int, api_key: str) -> dict:
         raise ValueError("Unexpected thread ID returned by local API")
     idem_key = "local-demo-" + uuid.uuid4().hex
     approval = {"action": "approve", "idempotency_key": idem_key}
+    approval_started_at = time.monotonic()
     approve_status, approved = request(base_url, f"/predict/graph/{thread_id}/approve", api_key, approval)
+    approval_ms = round((time.monotonic() - approval_started_at) * 1000)
     replay_status, replayed = request(base_url, f"/predict/graph/{thread_id}/approve", api_key, approval)
     conflict_status, conflict = request(base_url, f"/predict/graph/{thread_id}/approve", api_key, {
         "action": "reject", "idempotency_key": idem_key,
@@ -89,6 +92,7 @@ def run(port: int, api_key: str) -> dict:
     })
     after_status, after = request(base_url, "/api/disbursements", api_key)
     audit_status, audit = request(base_url, f"/audit/{thread_id}", api_key)
+    workflow_ms = round((time.monotonic() - workflow_started_at) * 1000)
     disbursement = approved.get("disbursement") or {}
     matching = [row for row in after.get("disbursements", []) if row.get("id") == disbursement.get("id")]
 
@@ -110,7 +114,12 @@ def run(port: int, api_key: str) -> dict:
         "scope": "Synthetic single-process localhost API; no real lending or cloud deployment",
         "start_status": start_status,
         "start_latency_ms": start_ms,
+        "approval_latency_ms": approval_ms,
+        "full_workflow_latency_ms": workflow_ms,
+        "task_completion": 1.0,
         "decision_before_approval": start["decision"],
+        "risk_score": start.get("risk_score"),
+        "explanation_source": (start.get("explanation_meta") or {}).get("source", "unrecorded"),
         "approval_required": start["approval_required"],
         "authority_level": start.get("authority_level"),
         "approval_status": approve_status,

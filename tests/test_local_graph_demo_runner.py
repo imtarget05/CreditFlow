@@ -45,6 +45,10 @@ def test_runner_checks_review_replay_and_single_disbursement(monkeypatch):
     assert report["replay"] is True
     assert report["conflicting_action_status"] == 409
     assert report["different_key_after_terminal_status"] == 409
+    assert report["task_completion"] == 1.0
+    assert 0 <= report["start_latency_ms"] <= report["full_workflow_latency_ms"]
+    assert 0 <= report["approval_latency_ms"] <= report["full_workflow_latency_ms"]
+    assert report["explanation_source"] == "unrecorded"
 
 
 @pytest.mark.parametrize("port,key", [(0, "local-test-key"), (65536, "local-test-key"), (18081, "")])
